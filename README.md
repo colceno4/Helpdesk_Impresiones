@@ -2,7 +2,24 @@
 
 Aplicación de una sola página (`index.html`, sin build ni dependencias de servidor)
 para prorratear impresiones Ricoh por Centro de Costo, con historial, detección de
-usuarios sin CeCo y consumo por empresa. Persiste en Supabase.
+usuarios sin CeCo, consumo por empresa, y análisis de patrones de uso para detectar
+anomalías de comportamiento. Persiste en Supabase.
+
+## Funcionalidades principales (pestañas de la app)
+
+- **Prorrateo de factura**: distribuye una factura entre Centros de Costo según impresiones.
+- **Informe de consumo**: dashboard mensual con tendencias por Usuario, CeCo e Impresora,
+  cambios significativos entre periodos, y proyección del próximo mes con rango de confianza.
+- **Histórico por usuario**: detalle de impresiones filtrable por usuario/fecha, exportable a CSV.
+- **Anomalías**: detección de días con volumen fuera de lo normal (mediana/MAD) y de cambios
+  sostenidos de nivel (CUSUM).
+- **Impresiones personales**: marca documentos probablemente personales por extensión de foto,
+  patrones de cámara/celular, y palabras clave configurables.
+- **Patrones avanzados**: impresión fuera de horario laboral, ráfagas de impresión, documentos
+  compartidos entre usuarios, documentos repetidos por el mismo usuario, afinidad usuario-impresora,
+  y un score de riesgo combinado por usuario.
+- **Usuarios sin CeCo** y **Cargas y empresas**: mantenimiento de la base de usuarios/CeCo y
+  gestión de los Reportes cargados.
 
 ## Estructura del proyecto
 
@@ -11,7 +28,7 @@ usuarios sin CeCo y consumo por empresa. Persiste en Supabase.
 ├── index.html          # Toda la app (HTML + CSS + JS en un solo archivo)
 ├── vercel.json          # Config de despliegue estático en Vercel
 ├── supabase/
-│   └── schema.sql       # Esquema completo de la base de datos (tablas, RPCs, políticas)
+│   └── schema.sql       # Esquema completo de la base de datos (tablas, funciones RPC, políticas e índices)
 └── README.md
 ```
 
