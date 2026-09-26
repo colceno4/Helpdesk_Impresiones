@@ -292,7 +292,7 @@ tfoot td:first-child{text-align:left;font-family:'Space Grotesk',sans-serif;}
 .legend-mini .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:middle;}
 
 .trend-svg{width:100%;height:auto;display:block;}
-.trend-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+.trend-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;}
 @media (max-width:900px){.trend-grid{grid-template-columns:1fr;}}
 
 .changes-table{width:100%;border-collapse:collapse;font-size:12.5px;}
@@ -377,7 +377,8 @@ tfoot td:first-child{text-align:left;font-family:'Space Grotesk',sans-serif;}
 .historial-table-wrap{max-height:520px;overflow:auto;}
 .historial-table-wrap table{font-size:12.5px;}
 .batch-status{margin-top:8px;font-size:11px;color:var(--ink-soft);min-height:14px;}
-.batch-status.ok{color:var(--teal);}
+.batch-status.ok{color:#1a7f37;}
+.batch-status.loading{color:#c1720a;}
 .batch-status.err{color:var(--danger);}
 
 /* ---------- Anomalías ---------- */
@@ -423,6 +424,8 @@ tfoot td:first-child{text-align:left;font-family:'Space Grotesk',sans-serif;}
     <button data-view="informe">Informe de consumo</button>
     <button data-view="historial">Histórico por usuario</button>
     <button data-view="anomalias">Anomalías</button>
+    <button data-view="personales">Impresiones personales</button>
+    <button data-view="patrones">Patrones avanzados</button>
     <button data-view="sinceco">Usuarios sin CeCo</button>
     <button data-view="cargas">Cargas y empresas</button>
   </div>
@@ -762,6 +765,170 @@ tfoot td:first-child{text-align:left;font-family:'Space Grotesk',sans-serif;}
         Presiona "Analizar anomalías" para revisar todo el historial guardado en la base de datos. Necesitas haber creado la función <code>printer_daily_totals</code> en Supabase (ver instrucciones) y tener al menos un par de Reportes cargados.
       </div>
     </div>
+
+    <div class="panel" style="margin:16px 0;">
+      <div class="step-head" style="margin-bottom:12px;">
+        <div class="step-num">•</div>
+        <div class="step-title">Cambios sostenidos de nivel (CUSUM)</div>
+      </div>
+      <div class="step-sub" style="margin:0 0 14px 32px;">A diferencia del detector anterior (que marca días puntuales fuera de lo normal), esto detecta cuando un usuario cambia su nivel habitual de forma <strong>sostenida</strong> — por ejemplo, sube gradualmente de 20 a 60 hojas/día y se mantiene ahí — algo que un solo día atípico no necesariamente revela.</div>
+      <div class="historial-controls" style="margin-left:32px;">
+        <div class="field small">
+          <label for="cusum-k">Holgura (× MAD)</label>
+          <input type="number" id="cusum-k" value="0.5" step="0.1" min="0">
+        </div>
+        <div class="field small">
+          <label for="cusum-h">Umbral de decisión (× MAD)</label>
+          <input type="number" id="cusum-h" value="5" step="0.5" min="1">
+        </div>
+        <div class="field small">
+          <label for="cusum-dias-min">Mín. días con historial</label>
+          <input type="number" id="cusum-dias-min" value="10" step="1" min="4">
+        </div>
+        <button class="btn-primary" style="margin-top:0;width:auto;padding:11px 20px;" id="btn-analizar-cusum">Detectar cambios sostenidos</button>
+      </div>
+      <div class="batch-status" id="cusum-status" style="margin-left:32px;"></div>
+    </div>
+    <div id="cusum-results-area"></div>
+  </div>
+
+  <div id="view-personales" class="view">
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="step-head" style="margin-bottom:12px;">
+        <div class="step-num">•</div>
+        <div class="step-title">Impresiones personales por nombre de trabajo</div>
+      </div>
+      <div class="step-sub" style="margin:0 0 14px 32px;">Revisa el nombre del documento (columna "Descripción" del Reporte) de todo el historial guardado y marca los que probablemente sean impresiones personales, combinando tres criterios: extensión de foto (.jpg, .png…), patrones típicos de cámara/celular (IMG_, WhatsApp Image, Screenshot…) y palabras clave.</div>
+      <div class="historial-controls" style="margin-left:32px;">
+        <div class="field small">
+          <label for="pers-desde">Desde</label>
+          <input type="date" id="pers-desde">
+        </div>
+        <div class="field small">
+          <label for="pers-hasta">Hasta</label>
+          <input type="date" id="pers-hasta">
+        </div>
+      </div>
+      <div class="field" style="margin-left:32px;max-width:680px;">
+        <label for="pers-palabras">Palabras clave (separadas por coma, edítalas libremente)</label>
+        <input type="text" id="pers-palabras" value="foto,fotos,dni,boleta,recibo,cv,curriculum,currículum,tarea,universidad,colegio,receta,pasaje,vacaciones,seguro,certificado,partida,carnet,licencia,meme,wallpaper,personal,entrada,ticket,invitación,invitacion,cumpleaños,cumpleanos,tesis,monografía,monografia">
+        <div class="hint">Además de estas palabras, siempre se revisan extensiones de foto y patrones de cámara/celular, aunque la lista esté vacía.</div>
+      </div>
+      <div class="historial-controls" style="margin-left:32px;">
+        <button class="btn-primary" style="margin-top:0;width:auto;padding:11px 20px;" id="btn-analizar-personales">Analizar impresiones personales</button>
+      </div>
+      <div class="batch-status" id="pers-status" style="margin-left:32px;"></div>
+    </div>
+
+    <div id="personales-results-area">
+      <div class="empty-state">
+        <svg class="regmark" viewBox="0 0 44 44" fill="none" style="display:block">
+          <circle cx="20" cy="20" r="9" fill="#00AEEF" style="mix-blend-mode:multiply"/>
+          <circle cx="26" cy="18" r="9" fill="#EC008C" style="mix-blend-mode:multiply"/>
+          <circle cx="23" cy="26" r="9" fill="#FFDE17" style="mix-blend-mode:multiply"/>
+        </svg>
+        Configura la base de datos (⚙ arriba a la derecha) y presiona "Analizar impresiones personales". Necesitas haber creado la función <code>impresiones_personales</code> en Supabase (ver instrucciones).
+      </div>
+    </div>
+  </div>
+
+  <div id="view-patrones" class="view">
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="step-head" style="margin-bottom:12px;">
+        <div class="step-num">•</div>
+        <div class="step-title">Impresión fuera de horario laboral</div>
+      </div>
+      <div class="step-sub" style="margin:0 0 14px 32px;">Marca impresiones hechas fuera del rango horario configurado y/o en fin de semana (hora Lima) — señal típica de uso indebido o de una cuenta compartida.</div>
+      <div class="historial-controls" style="margin-left:32px;">
+        <div class="field small"><label for="fh-desde">Desde</label><input type="date" id="fh-desde"></div>
+        <div class="field small"><label for="fh-hasta">Hasta</label><input type="date" id="fh-hasta"></div>
+        <div class="field small"><label for="fh-inicio">Hora inicio laboral</label><input type="number" id="fh-inicio" value="8" min="0" max="23"></div>
+        <div class="field small"><label for="fh-fin">Hora fin laboral</label><input type="number" id="fh-fin" value="18" min="0" max="23"></div>
+        <div class="field small"><label for="fh-finde"><input type="checkbox" id="fh-finde" checked style="width:auto;margin-right:4px;">Incluir fines de semana</label></div>
+        <button class="btn-primary" style="margin-top:0;width:auto;padding:11px 20px;" id="btn-analizar-fh">Analizar</button>
+      </div>
+      <div class="batch-status" id="fh-status" style="margin-left:32px;"></div>
+    </div>
+    <div id="fh-results-area"></div>
+
+    <div class="panel" style="margin:16px 0;">
+      <div class="step-head" style="margin-bottom:12px;">
+        <div class="step-num">•</div>
+        <div class="step-title">Ráfagas de impresión</div>
+      </div>
+      <div class="step-sub" style="margin:0 0 14px 32px;">Muchos trabajos del mismo usuario en una ventana corta de tiempo — puede indicar reimpresión por error, prueba de equipo, o un proceso automatizado.</div>
+      <div class="historial-controls" style="margin-left:32px;">
+        <div class="field small"><label for="rf-desde">Desde</label><input type="date" id="rf-desde"></div>
+        <div class="field small"><label for="rf-hasta">Hasta</label><input type="date" id="rf-hasta"></div>
+        <div class="field small"><label for="rf-minutos">Ventana (minutos)</label><input type="number" id="rf-minutos" value="10" min="1"></div>
+        <div class="field small"><label for="rf-min-trabajos">Mín. trabajos en la ventana</label><input type="number" id="rf-min-trabajos" value="8" min="2"></div>
+        <button class="btn-primary" style="margin-top:0;width:auto;padding:11px 20px;" id="btn-analizar-rafagas">Analizar</button>
+      </div>
+      <div class="batch-status" id="rf-status" style="margin-left:32px;"></div>
+    </div>
+    <div id="rf-results-area"></div>
+
+    <div class="panel" style="margin:16px 0;">
+      <div class="step-head" style="margin-bottom:12px;">
+        <div class="step-num">•</div>
+        <div class="step-title">Documentos compartidos entre usuarios</div>
+      </div>
+      <div class="step-sub" style="margin:0 0 14px 32px;">El mismo nombre de documento impreso por varias personas distintas — puede ser un formato de trabajo legítimo, o un archivo personal reenviado (fotos, volantes, invitaciones).</div>
+      <div class="historial-controls" style="margin-left:32px;">
+        <div class="field small"><label for="dc-desde">Desde</label><input type="date" id="dc-desde"></div>
+        <div class="field small"><label for="dc-hasta">Hasta</label><input type="date" id="dc-hasta"></div>
+        <div class="field small"><label for="dc-min-usuarios">Mín. usuarios distintos</label><input type="number" id="dc-min-usuarios" value="3" min="2"></div>
+        <button class="btn-primary" style="margin-top:0;width:auto;padding:11px 20px;" id="btn-analizar-compartidos">Analizar</button>
+      </div>
+      <div class="batch-status" id="dc-status" style="margin-left:32px;"></div>
+    </div>
+    <div id="dc-results-area"></div>
+
+    <div class="panel" style="margin:16px 0;">
+      <div class="step-head" style="margin-bottom:12px;">
+        <div class="step-num">•</div>
+        <div class="step-title">Documentos repetidos por el mismo usuario</div>
+      </div>
+      <div class="step-sub" style="margin:0 0 14px 32px;">El mismo usuario reimprimiendo el mismo documento muchas veces el mismo día — desperdicio por atascos, prueba mal calibrada, o abuso.</div>
+      <div class="historial-controls" style="margin-left:32px;">
+        <div class="field small"><label for="dr-desde">Desde</label><input type="date" id="dr-desde"></div>
+        <div class="field small"><label for="dr-hasta">Hasta</label><input type="date" id="dr-hasta"></div>
+        <div class="field small"><label for="dr-min-veces">Mín. veces el mismo día</label><input type="number" id="dr-min-veces" value="5" min="2"></div>
+        <button class="btn-primary" style="margin-top:0;width:auto;padding:11px 20px;" id="btn-analizar-repetidos">Analizar</button>
+      </div>
+      <div class="batch-status" id="dr-status" style="margin-left:32px;"></div>
+    </div>
+    <div id="dr-results-area"></div>
+
+    <div class="panel" style="margin:16px 0;">
+      <div class="step-head" style="margin-bottom:12px;">
+        <div class="step-num">•</div>
+        <div class="step-title">Afinidad usuario-impresora</div>
+      </div>
+      <div class="step-sub" style="margin:0 0 14px 32px;">Cada usuario suele imprimir siempre desde 1-2 equipos fijos. Compara un periodo reciente contra todo el historial anterior y marca cuando alguien empieza a imprimir, con volumen relevante, desde un equipo que antes casi no usaba.</div>
+      <div class="historial-controls" style="margin-left:32px;">
+        <div class="field small"><label for="af-corte">Fecha de corte (reciente desde aquí)</label><input type="date" id="af-corte"></div>
+        <div class="field small"><label for="af-min-pct">% mínimo en el periodo reciente</label><input type="number" id="af-min-pct" value="20" min="1"></div>
+        <button class="btn-primary" style="margin-top:0;width:auto;padding:11px 20px;" id="btn-analizar-afinidad">Analizar</button>
+      </div>
+      <div class="batch-status" id="af-status" style="margin-left:32px;"></div>
+    </div>
+    <div id="af-results-area"></div>
+
+    <div class="panel" style="margin:16px 0;">
+      <div class="step-head" style="margin-bottom:12px;">
+        <div class="step-num">•</div>
+        <div class="step-title">Score de riesgo combinado</div>
+      </div>
+      <div class="step-sub" style="margin:0 0 14px 32px;">Combina en un solo ranking: anomalías de volumen, impresiones personales, impresiones fuera de horario y % de color — para priorizar a quién revisar primero en vez de cruzar varias pestañas.</div>
+      <div class="historial-controls" style="margin-left:32px;">
+        <div class="field small"><label for="sr-desde">Desde</label><input type="date" id="sr-desde"></div>
+        <div class="field small"><label for="sr-hasta">Hasta</label><input type="date" id="sr-hasta"></div>
+        <button class="btn-primary" style="margin-top:0;width:auto;padding:11px 20px;" id="btn-analizar-score">Calcular score</button>
+      </div>
+      <div class="batch-status" id="sr-status" style="margin-left:32px;"></div>
+    </div>
+    <div id="sr-results-area"></div>
   </div>
 
 </div>
@@ -878,7 +1045,7 @@ async function subirLoteASupabase(fileName, rows, dateRange, label){
     if (statusEl){ statusEl.textContent = '"' + fileName + '" no tiene columna de Fecha reconocible — no se guardó en la base de datos (no se puede evitar duplicados sin fechas).'; statusEl.className = 'batch-status err'; }
     return;
   }
-  if (statusEl){ statusEl.textContent = 'Guardando "' + fileName + '" en la base de datos…'; statusEl.className = 'batch-status'; }
+  if (statusEl){ statusEl.textContent = 'Guardando "' + fileName + '" en la base de datos…'; statusEl.className = 'batch-status loading'; }
   try {
     const fDesde = toISODate(dateRange.min);
     const fHasta = toISODate(dateRange.max);
@@ -1047,12 +1214,12 @@ function renderHistorialResultados(query, registros){
     const f = r.fecha ? new Date(r.fecha) : null;
     const fStr = f ? f.toLocaleString('es-PE', {timeZone:'America/Lima'}) : '—';
     html += '<tr><td style="text-align:left;font-family:\'Inter\',sans-serif;">' + fStr + '</td>' +
-      (cuentasList.length > 1 ? '<td style="text-align:left;font-family:\'Inter\',sans-serif;">' + r.usuario + '</td>' : '') +
-      '<td style="text-align:left;font-family:\'Inter\',sans-serif;">' + (r.descripcion || '—') + '</td>' +
-      '<td style="text-align:left;font-family:\'Inter\',sans-serif;">' + (r.departamento || '—') + '</td>' +
-      '<td style="text-align:left;font-family:\'Inter\',sans-serif;">' + (r.ceco || '—') + '</td>' +
-      '<td style="text-align:left;font-family:\'Inter\',sans-serif;">' + (r.dispositivo || '—') + '</td>' +
-      '<td>' + (r.tipo || '—') + '</td><td>' + fmtInt(r.total||0) + '</td></tr>';
+      (cuentasList.length > 1 ? '<td style="text-align:left;font-family:\'Inter\',sans-serif;">' + escH(r.usuario) + '</td>' : '') +
+      '<td style="text-align:left;font-family:\'Inter\',sans-serif;">' + escH(r.descripcion || '—') + '</td>' +
+      '<td style="text-align:left;font-family:\'Inter\',sans-serif;">' + escH(r.departamento || '—') + '</td>' +
+      '<td style="text-align:left;font-family:\'Inter\',sans-serif;">' + escH(r.ceco || '—') + '</td>' +
+      '<td style="text-align:left;font-family:\'Inter\',sans-serif;">' + escH(r.dispositivo || '—') + '</td>' +
+      '<td>' + escH(r.tipo || '—') + '</td><td>' + fmtInt(r.total||0) + '</td></tr>';
   });
   html += '</tbody></table></div></div>';
 
@@ -1088,6 +1255,8 @@ async function fetchDailyTotals(){
 
 function mean(arr){ return arr.reduce((a,b)=>a+b,0) / arr.length; }
 function stddev(arr, m){ return Math.sqrt(arr.reduce((s,v)=>s+(v-m)*(v-m),0) / arr.length); }
+function median(arr){ const s = arr.slice().sort((a,b)=>a-b); const n = s.length; if (!n) return 0; return n%2 ? s[(n-1)/2] : (s[n/2-1]+s[n/2])/2; }
+function mad(arr, med){ return median(arr.map(v => Math.abs(v-med))) * 1.4826; } // 1.4826 aproxima la desviación estándar bajo normalidad
 
 function detectarAnomalias(dailyRows, opts){
   const { zThreshold, volumenMin, diasMin } = opts;
@@ -1101,28 +1270,30 @@ function detectarAnomalias(dailyRows, opts){
   Object.values(porUsuario).forEach(u => {
     if (u.dias.length < diasMin) return; // muy poco historial para tener una línea base confiable
     const totales = u.dias.map(d => d.total);
-    const promedio = mean(totales);
-    const desv = stddev(totales, promedio);
+    const medGlobal = median(totales);
+    const madGlobal = mad(totales, medGlobal);
 
     u.dias.forEach(d => {
       if (d.total < volumenMin) return; // ignora días de bajo volumen aunque sean "raros" estadísticamente
-      // Línea base excluyendo el propio día evaluado (para que un pico no infle su propio promedio)
+      // Línea base robusta (mediana + MAD) excluyendo el propio día evaluado, para que un pico
+      // no infle su propia referencia — la mediana además no se deja arrastrar por outliers
+      // como sí le pasa al promedio.
       const otros = totales.filter((_,i) => u.dias[i].fecha !== d.fecha);
-      const promSinDia = otros.length ? mean(otros) : promedio;
-      const desvSinDia = otros.length ? stddev(otros, promSinDia) : desv;
+      const medSinDia = otros.length ? median(otros) : medGlobal;
+      const madSinDia = otros.length ? mad(otros, medSinDia) : madGlobal;
 
       let z, esNuevoPatron = false;
-      if (desvSinDia > 0){
-        z = (d.total - promSinDia) / desvSinDia;
+      if (madSinDia > 0){
+        z = (d.total - medSinDia) / madSinDia;
       } else {
         // Historial sin variación (todos los días iguales): cualquier desvío notable ya es anómalo
-        z = (d.total > promSinDia && promSinDia > 0) ? (d.total / promSinDia) : (d.total > 0 && promSinDia === 0 ? 99 : 0);
+        z = (d.total > medSinDia && medSinDia > 0) ? (d.total / medSinDia) : (d.total > 0 && medSinDia === 0 ? 99 : 0);
         esNuevoPatron = true;
       }
       if (z >= zThreshold){
         anomalias.push({
           usuario: u.usuario, nombre: u.nombre, fecha: d.fecha, total: d.total,
-          promedio: promSinDia, desviacion: desvSinDia, z, esNuevoPatron,
+          promedio: medSinDia, desviacion: madSinDia, z, esNuevoPatron,
           severidad: z >= zThreshold * 1.6 ? 'alta' : 'media'
         });
       }
@@ -1131,6 +1302,44 @@ function detectarAnomalias(dailyRows, opts){
 
   anomalias.sort((a,b) => b.z - a.z);
   return anomalias;
+}
+
+// ---------- CUSUM: cambios sostenidos de nivel (no solo picos de un día) ------------
+function detectarCambiosSostenidos(dailyRows, opts){
+  const { kFactor, hFactor, diasMin } = opts;
+  const porUsuario = {};
+  dailyRows.forEach(r => {
+    if (!porUsuario[r.usuario]) porUsuario[r.usuario] = { usuario: r.usuario, nombre: r.nombre || r.usuario, dias: [] };
+    porUsuario[r.usuario].dias.push({ fecha: r.fecha_dia, total: Number(r.total)||0 });
+  });
+
+  const hallazgos = [];
+  Object.values(porUsuario).forEach(u => {
+    if (u.dias.length < diasMin) return;
+    const dias = u.dias.slice().sort((a,b) => a.fecha < b.fecha ? -1 : 1);
+    const totales = dias.map(d => d.total);
+    const med = median(totales);
+    const desv = mad(totales, med) || (stddev(totales, mean(totales)) || 1);
+    const k = kFactor * desv;   // holgura: cambios menores a esto se ignoran
+    const h = hFactor * desv;   // umbral de decisión: cruzarlo = cambio sostenido confirmado
+
+    let sPos = 0, sNeg = 0, yaMarcado = false;
+    dias.forEach((d, i) => {
+      sPos = Math.max(0, sPos + (d.total - med - k));
+      sNeg = Math.max(0, sNeg + (med - k - d.total));
+      if (!yaMarcado && (sPos > h || sNeg > h)){
+        hallazgos.push({
+          usuario: u.usuario, nombre: u.nombre, fecha: d.fecha,
+          direccion: sPos > h ? 'aumento' : 'disminucion',
+          nivelHabitual: med, magnitud: Math.max(sPos, sNeg)
+        });
+        yaMarcado = true; // un cambio sostenido reportado por usuario evita ruido de días repetidos
+      }
+    });
+  });
+
+  hallazgos.sort((a,b) => b.magnitud - a.magnitud);
+  return hallazgos;
 }
 
 async function analizarAnomalias(){
@@ -1174,7 +1383,7 @@ function renderAnomalias(anomalias){
   let html = '<div class="table-wrap"><div class="table-head"><h2>Días con volumen fuera de lo normal</h2><div class="meta"><span class="scope-tag">' + anomalias.length + ' anomalías</span></div></div>';
   html += '<div class="historial-table-wrap"><table><thead><tr><th style="text-align:left;">Usuario</th><th style="text-align:left;">Fecha</th><th>Ese día</th><th>Promedio habitual</th><th>Severidad</th><th></th></tr></thead><tbody>';
   anomalias.forEach((a, idx) => {
-    html += '<tr id="anom-row-' + idx + '"><td style="text-align:left;font-family:\'Inter\',sans-serif;">' + a.nombre + ' <span style="color:var(--ink-soft);">(' + a.usuario + ')</span></td>' +
+    html += '<tr id="anom-row-' + idx + '"><td style="text-align:left;font-family:\'Inter\',sans-serif;">' + escH(a.nombre) + ' <span style="color:var(--ink-soft);">(' + escH(a.usuario) + ')</span></td>' +
       '<td style="text-align:left;font-family:\'Inter\',sans-serif;">' + a.fecha + '</td>' +
       '<td>' + fmtInt(a.total) + '</td>' +
       '<td>' + fmtInt(Math.round(a.promedio)) + (a.esNuevoPatron ? ' <span style="color:var(--ink-soft);font-size:10px;">(sin variación previa)</span>' : ' ±' + fmtInt(Math.round(a.desviacion))) + '</td>' +
@@ -1227,10 +1436,10 @@ function buildDrilldownHTML(anomalia, registros){
   const docsList = Object.values(porDoc).sort((a,b) => b.total - a.total);
   const totalDia = registros.reduce((s,r)=>s+(r.total||0),0);
 
-  let html = '<h4>Impresiones de ' + anomalia.nombre + ' el ' + anomalia.fecha + ' — total ' + fmtInt(totalDia) + ' (habitual ≈ ' + fmtInt(Math.round(anomalia.promedio)) + ')</h4>';
+  let html = '<h4>Impresiones de ' + escH(anomalia.nombre) + ' el ' + anomalia.fecha + ' — total ' + fmtInt(totalDia) + ' (habitual ≈ ' + fmtInt(Math.round(anomalia.promedio)) + ')</h4>';
   html += '<table class="changes-table"><thead><tr><th>Documento</th><th>Dispositivo</th><th class="num">Veces</th><th class="num">Total hojas</th><th class="num">% del día</th></tr></thead><tbody>';
   docsList.slice(0,15).forEach(d => {
-    html += '<tr><td class="name">' + d.documento + '</td><td>' + d.dispositivo + '</td><td class="num">' + d.veces + '</td><td class="num">' + fmtInt(d.total) + '</td><td class="num">' + (totalDia > 0 ? ((d.total/totalDia)*100).toFixed(0) : 0) + '%</td></tr>';
+    html += '<tr><td class="name">' + escH(d.documento) + '</td><td>' + escH(d.dispositivo) + '</td><td class="num">' + d.veces + '</td><td class="num">' + fmtInt(d.total) + '</td><td class="num">' + (totalDia > 0 ? ((d.total/totalDia)*100).toFixed(0) : 0) + '%</td></tr>';
   });
   html += '</tbody></table>';
   if (docsList.length > 15) html += '<p style="font-size:11px;color:var(--ink-soft);margin:6px 0 0;">Mostrando los 15 documentos con más volumen de ' + docsList.length + ' distintos.</p>';
@@ -1238,6 +1447,430 @@ function buildDrilldownHTML(anomalia, registros){
 }
 
 $('btn-analizar-anomalias').addEventListener('click', analizarAnomalias);
+
+async function analizarCusum(){
+  const statusEl = $('cusum-status');
+  if (!supabaseClient){
+    statusEl.textContent = 'Configura la base de datos primero (botón ⚙ arriba a la derecha).';
+    statusEl.className = 'batch-status err';
+    return;
+  }
+  const kFactor = parseFloat($('cusum-k').value) || 0.5;
+  const hFactor = parseFloat($('cusum-h').value) || 5;
+  const diasMin = parseInt($('cusum-dias-min').value, 10) || 10;
+  statusEl.textContent = 'Consultando historial y calculando cambios sostenidos…';
+  statusEl.className = 'batch-status loading';
+  try {
+    const daily = await fetchDailyTotals();
+    const hallazgos = detectarCambiosSostenidos(daily, { kFactor, hFactor, diasMin });
+    renderCusum(hallazgos);
+    statusEl.textContent = hallazgos.length + ' cambio(s) sostenido(s) detectado(s).';
+    statusEl.className = 'batch-status ok';
+  } catch(err){
+    statusEl.textContent = 'Error al analizar: ' + (err.message || err);
+    statusEl.className = 'batch-status err';
+  }
+}
+
+function renderCusum(hallazgos){
+  const el = $('cusum-results-area');
+  if (!hallazgos.length){
+    el.innerHTML = '<div class="empty-state">No se detectaron cambios sostenidos con los parámetros actuales.</div>';
+    return;
+  }
+  let html = '<div class="table-wrap"><div class="table-head"><h2>Usuarios con cambio de nivel sostenido</h2><div class="meta"><span class="scope-tag">' + hallazgos.length + ' caso(s)</span></div></div>';
+  html += '<div class="historial-table-wrap"><table><thead><tr><th style="text-align:left;">Usuario</th><th style="text-align:left;">Desde</th><th>Dirección</th><th>Nivel habitual previo</th></tr></thead><tbody>';
+  hallazgos.forEach(h => {
+    html += '<tr><td style="text-align:left;font-family:\'Inter\',sans-serif;">' + escH(h.nombre) + ' <span style="color:var(--ink-soft);">(' + escH(h.usuario) + ')</span></td>' +
+      '<td style="text-align:left;font-family:\'Inter\',sans-serif;">' + h.fecha + '</td>' +
+      '<td><span class="tag-change ' + (h.direccion==='aumento'?'tag-up':'tag-down') + '">' + (h.direccion==='aumento'?'▲ Aumento':'▼ Disminución') + '</span></td>' +
+      '<td>' + fmtInt(Math.round(h.nivelHabitual)) + '</td></tr>';
+  });
+  html += '</tbody></table></div></div>';
+  el.innerHTML = html;
+}
+
+$('btn-analizar-cusum').addEventListener('click', analizarCusum);
+
+// ---------- Impresiones personales por nombre de trabajo ------------
+function motivoLabel(m){
+  return m === 'extension_foto' ? 'Extensión de foto' : m === 'patron_generico' ? 'Patrón de cámara/celular' : m === 'palabra_clave' ? 'Palabra clave' : 'Otro';
+}
+
+async function analizarImpresionesPersonales(){
+  const statusEl = $('pers-status');
+  if (!supabaseClient){
+    statusEl.textContent = 'Configura la base de datos primero (botón ⚙ arriba a la derecha).';
+    statusEl.className = 'batch-status err';
+    return;
+  }
+  const desde = $('pers-desde').value || null;
+  const hasta = $('pers-hasta').value || null;
+  const palabras = $('pers-palabras').value.split(',').map(p => p.trim()).filter(Boolean);
+  statusEl.textContent = 'Analizando nombres de documentos…';
+  statusEl.className = 'batch-status loading';
+  try {
+    const { data, error } = await supabaseClient.rpc('impresiones_personales', {
+      p_desde: desde, p_hasta: hasta, p_palabras: palabras
+    });
+    if (error) throw error;
+    renderPersonales(data || []);
+    statusEl.textContent = (data ? data.length : 0) + ' impresión(es) marcada(s) como probable uso personal' + (data && data.length >= 5000 ? ' (se alcanzó el máximo de 5000 — acota el rango de fechas para ver el resto)' : '') + '.';
+    statusEl.className = 'batch-status ok';
+  } catch(err){
+    statusEl.textContent = 'Error al analizar: ' + (err.message || err) + (String(err.message||'').includes('impresiones_personales') ? ' — ¿ya ejecutaste el SQL de la función impresiones_personales en Supabase?' : '');
+    statusEl.className = 'batch-status err';
+  }
+}
+
+function renderPersonales(rows){
+  const el = $('personales-results-area');
+  if (!rows.length){
+    el.innerHTML = '<div class="empty-state">No se encontraron nombres de documento que calcen con los criterios actuales en ese rango de fechas.</div>';
+    return;
+  }
+  const porUsuario = {};
+  rows.forEach(r => {
+    if (!porUsuario[r.usuario]) porUsuario[r.usuario] = { usuario: r.usuario, nombre: r.nombre || USER_TO_NOMBRE[r.usuario] || '', total: 0, veces: 0, items: [] };
+    porUsuario[r.usuario].total += (r.total||0);
+    porUsuario[r.usuario].veces += 1;
+    porUsuario[r.usuario].items.push(r);
+  });
+  const lista = Object.values(porUsuario).sort((a,b) => b.veces - a.veces);
+
+  let html = '<div class="table-wrap"><div class="table-head"><h2>Impresiones probablemente personales</h2><div class="meta"><span class="scope-tag">' + rows.length + ' documento(s) · ' + lista.length + ' usuario(s)</span></div></div>';
+  html += '<div class="historial-table-wrap"><table><thead><tr><th style="text-align:left;">Usuario</th><th>Documentos marcados</th><th>Total hojas</th><th></th></tr></thead><tbody>';
+  lista.forEach((u, idx) => {
+    html += '<tr id="pers-row-' + idx + '"><td style="text-align:left;font-family:\'Inter\',sans-serif;">' + escH(u.nombre || '—') + ' <span style="color:var(--ink-soft);">(' + escH(u.usuario) + ')</span></td>' +
+      '<td>' + u.veces + '</td>' +
+      '<td>' + fmtInt(u.total) + '</td>' +
+      '<td><button class="btn-detalle" data-idx="' + idx + '">Ver documentos</button></td></tr>' +
+      '<tr id="pers-detalle-' + idx + '" style="display:none;"><td colspan="4" style="padding:0;border-bottom:1px solid var(--line-soft);"><div class="anom-drilldown" id="pers-drilldown-' + idx + '"></div></td></tr>';
+  });
+  html += '</tbody></table></div></div>';
+  el.innerHTML = html;
+
+  el.querySelectorAll('.btn-detalle').forEach(btn => btn.addEventListener('click', () => {
+    const idx = btn.dataset.idx;
+    const fila = $('pers-detalle-' + idx);
+    const abierta = fila.style.display !== 'none';
+    if (abierta){ fila.style.display = 'none'; return; }
+    fila.style.display = 'table-row';
+    const cont = $('pers-drilldown-' + idx);
+    const u = lista[idx];
+    const items = u.items.slice().sort((a,b) => new Date(b.fecha) - new Date(a.fecha));
+    let h = '<h4>Documentos marcados de ' + escH(u.nombre || u.usuario) + '</h4>';
+    h += '<table class="changes-table"><thead><tr><th>Fecha</th><th>Documento</th><th>Dispositivo</th><th class="num">Hojas</th><th>Motivo</th></tr></thead><tbody>';
+    items.slice(0,50).forEach(r => {
+      h += '<tr><td>' + (r.fecha ? new Date(r.fecha).toLocaleString('es-PE') : '—') + '</td><td class="name">' + escH(r.descripcion || '—') + '</td><td>' + escH(r.dispositivo || '—') + '</td><td class="num">' + fmtInt(r.total||0) + '</td><td>' + motivoLabel(r.motivo) + '</td></tr>';
+    });
+    h += '</tbody></table>';
+    if (items.length > 50) h += '<p style="font-size:11px;color:var(--ink-soft);margin:6px 0 0;">Mostrando 50 de ' + items.length + ' documentos.</p>';
+    cont.innerHTML = h;
+  }));
+}
+
+$('btn-analizar-personales').addEventListener('click', analizarImpresionesPersonales);
+
+// =====================================================================
+// ---------- Patrones avanzados ------------
+// =====================================================================
+
+// Renderizador genérico: agrupa filas por usuario, muestra tabla resumen
+// y un drilldown expandible por usuario con columnas configurables.
+function renderAgrupadoPorUsuario(elId, rows, opts){
+  const el = $(elId);
+  if (!rows.length){ el.innerHTML = '<div class="empty-state">' + opts.emptyText + '</div>'; return; }
+  const porUsuario = {};
+  rows.forEach(r => {
+    const key = r.usuario;
+    if (!porUsuario[key]) porUsuario[key] = { usuario: r.usuario, nombre: r.nombre || USER_TO_NOMBRE[r.usuario] || '', total: 0, veces: 0, items: [] };
+    porUsuario[key].total += (r.total||0);
+    porUsuario[key].veces += 1;
+    porUsuario[key].items.push(r);
+  });
+  const lista = Object.values(porUsuario).sort((a,b) => b.veces - a.veces);
+
+  let html = '<div class="table-wrap"><div class="table-head"><h2>' + opts.title + '</h2><div class="meta"><span class="scope-tag">' + rows.length + ' ' + opts.itemLabel + ' · ' + lista.length + ' usuario(s)</span></div></div>';
+  html += '<div class="historial-table-wrap"><table><thead><tr><th style="text-align:left;">Usuario</th><th>' + opts.countLabel + '</th><th>Total hojas</th><th></th></tr></thead><tbody>';
+  lista.forEach((u, idx) => {
+    html += '<tr><td style="text-align:left;font-family:\'Inter\',sans-serif;">' + escH(u.nombre||'—') + ' <span style="color:var(--ink-soft);">(' + escH(u.usuario) + ')</span></td>' +
+      '<td>' + u.veces + '</td><td>' + fmtInt(u.total) + '</td>' +
+      '<td><button class="btn-detalle" data-idx="' + idx + '">Ver detalle</button></td></tr>' +
+      '<tr id="' + elId + '-det-' + idx + '" style="display:none;"><td colspan="4" style="padding:0;border-bottom:1px solid var(--line-soft);"><div class="anom-drilldown" id="' + elId + '-drill-' + idx + '"></div></td></tr>';
+  });
+  html += '</tbody></table></div></div>';
+  el.innerHTML = html;
+
+  el.querySelectorAll('.btn-detalle').forEach(btn => btn.addEventListener('click', () => {
+    const idx = btn.dataset.idx;
+    const fila = $(elId + '-det-' + idx);
+    const abierta = fila.style.display !== 'none';
+    if (abierta){ fila.style.display = 'none'; return; }
+    fila.style.display = 'table-row';
+    const cont = $(elId + '-drill-' + idx);
+    const u = lista[idx];
+    const items = u.items.slice().sort((a,b) => new Date(b.fecha||b.inicio||0) - new Date(a.fecha||a.inicio||0));
+    let h = '<h4>' + escH(opts.drillTitle(u)) + '</h4>';
+    h += '<table class="changes-table"><thead><tr>' + opts.cols.map(c => '<th' + (c.num?' class="num"':'') + '>' + c.label + '</th>').join('') + '</tr></thead><tbody>';
+    items.slice(0,50).forEach(r => {
+      h += '<tr>' + opts.cols.map(c => '<td' + (c.num?' class="num"':(c.name?' class="name"':'')) + '>' + escH(c.fmt(r)) + '</td>').join('') + '</tr>';
+    });
+    h += '</tbody></table>';
+    if (items.length > 50) h += '<p style="font-size:11px;color:var(--ink-soft);margin:6px 0 0;">Mostrando 50 de ' + items.length + ' registros.</p>';
+    cont.innerHTML = h;
+  }));
+}
+
+const fFecha = f => f ? new Date(f).toLocaleString('es-PE', {timeZone:'America/Lima'}) : '—';
+
+// ---- Fuera de horario laboral ----
+async function analizarFueraHorario(){
+  const statusEl = $('fh-status');
+  if (!supabaseClient){ statusEl.textContent = 'Configura la base de datos primero (botón ⚙ arriba a la derecha).'; statusEl.className = 'batch-status err'; return; }
+  statusEl.textContent = 'Analizando…'; statusEl.className = 'batch-status loading';
+  try {
+    const { data, error } = await supabaseClient.rpc('impresiones_fuera_horario', {
+      p_desde: $('fh-desde').value || null, p_hasta: $('fh-hasta').value || null,
+      p_hora_inicio: parseInt($('fh-inicio').value,10) || 8, p_hora_fin: parseInt($('fh-fin').value,10) || 18,
+      p_incluir_finde: $('fh-finde').checked
+    });
+    if (error) throw error;
+    renderAgrupadoPorUsuario('fh-results-area', data || [], {
+      title: 'Impresiones fuera de horario', itemLabel: 'impresión(es)', countLabel: 'Impresiones',
+      emptyText: 'No se encontraron impresiones fuera de horario con estos criterios.',
+      drillTitle: u => 'Impresiones fuera de horario de ' + (u.nombre||u.usuario),
+      cols: [
+        {label:'Fecha', fmt:r=>fFecha(r.fecha)}, {label:'Documento', name:true, fmt:r=>r.descripcion||'—'},
+        {label:'Dispositivo', fmt:r=>r.dispositivo||'—'}, {label:'Hojas', num:true, fmt:r=>fmtInt(r.total||0)},
+        {label:'Motivo', fmt:r=>r.motivo==='fin_de_semana'?'Fin de semana':'Fuera de horario'}
+      ]
+    });
+    statusEl.textContent = (data?data.length:0) + ' impresión(es) fuera de horario encontrada(s).'; statusEl.className = 'batch-status ok';
+  } catch(err){
+    statusEl.textContent = 'Error al analizar: ' + (err.message || err) + (String(err.message||'').includes('impresiones_fuera_horario') ? ' — ¿ejecutaste el SQL de impresiones_fuera_horario en Supabase?' : '');
+    statusEl.className = 'batch-status err';
+  }
+}
+$('btn-analizar-fh').addEventListener('click', analizarFueraHorario);
+
+// ---- Ráfagas ----
+async function analizarRafagas(){
+  const statusEl = $('rf-status');
+  if (!supabaseClient){ statusEl.textContent = 'Configura la base de datos primero (botón ⚙ arriba a la derecha).'; statusEl.className = 'batch-status err'; return; }
+  statusEl.textContent = 'Analizando…'; statusEl.className = 'batch-status loading';
+  try {
+    const { data, error } = await supabaseClient.rpc('rafagas_impresion', {
+      p_desde: $('rf-desde').value || null, p_hasta: $('rf-hasta').value || null,
+      p_minutos: parseInt($('rf-minutos').value,10) || 10, p_min_trabajos: parseInt($('rf-min-trabajos').value,10) || 8
+    });
+    if (error) throw error;
+    const el = $('rf-results-area');
+    if (!data || !data.length){ el.innerHTML = '<div class="empty-state">No se encontraron ráfagas con estos criterios.</div>'; }
+    else {
+      let html = '<div class="table-wrap"><div class="table-head"><h2>Ráfagas de impresión</h2><div class="meta"><span class="scope-tag">' + data.length + ' ráfaga(s)</span></div></div>';
+      html += '<div class="historial-table-wrap"><table><thead><tr><th style="text-align:left;">Usuario</th><th style="text-align:left;">Inicio</th><th style="text-align:left;">Fin</th><th>Trabajos</th><th>Hojas</th></tr></thead><tbody>';
+      data.forEach(r => {
+        html += '<tr><td style="text-align:left;font-family:\'Inter\',sans-serif;">' + escH(r.nombre||r.usuario) + ' <span style="color:var(--ink-soft);">(' + escH(r.usuario) + ')</span></td>' +
+          '<td style="text-align:left;font-family:\'Inter\',sans-serif;">' + fFecha(r.inicio) + '</td><td style="text-align:left;font-family:\'Inter\',sans-serif;">' + fFecha(r.fin) + '</td>' +
+          '<td>' + r.trabajos + '</td><td>' + fmtInt(r.hojas||0) + '</td></tr>';
+      });
+      html += '</tbody></table></div></div>';
+      el.innerHTML = html;
+    }
+    statusEl.textContent = (data?data.length:0) + ' ráfaga(s) encontrada(s).'; statusEl.className = 'batch-status ok';
+  } catch(err){
+    statusEl.textContent = 'Error al analizar: ' + (err.message || err) + (String(err.message||'').includes('rafagas_impresion') ? ' — ¿ejecutaste el SQL de rafagas_impresion en Supabase?' : '');
+    statusEl.className = 'batch-status err';
+  }
+}
+$('btn-analizar-rafagas').addEventListener('click', analizarRafagas);
+
+// ---- Documentos compartidos entre usuarios ----
+async function analizarDocumentosCompartidos(){
+  const statusEl = $('dc-status');
+  if (!supabaseClient){ statusEl.textContent = 'Configura la base de datos primero (botón ⚙ arriba a la derecha).'; statusEl.className = 'batch-status err'; return; }
+  statusEl.textContent = 'Analizando…'; statusEl.className = 'batch-status loading';
+  try {
+    const { data, error } = await supabaseClient.rpc('documentos_compartidos', {
+      p_desde: $('dc-desde').value || null, p_hasta: $('dc-hasta').value || null,
+      p_min_usuarios: parseInt($('dc-min-usuarios').value,10) || 3
+    });
+    if (error) throw error;
+    const el = $('dc-results-area');
+    if (!data || !data.length){ el.innerHTML = '<div class="empty-state">No se encontraron documentos compartidos entre tantos usuarios con estos criterios.</div>'; }
+    else {
+      let html = '<div class="table-wrap"><div class="table-head"><h2>Documentos compartidos entre usuarios</h2><div class="meta"><span class="scope-tag">' + data.length + ' documento(s)</span></div></div>';
+      html += '<div class="historial-table-wrap"><table><thead><tr><th style="text-align:left;">Documento</th><th>Usuarios distintos</th><th>Total hojas</th><th style="text-align:left;">Usuarios</th></tr></thead><tbody>';
+      data.forEach(r => {
+        html += '<tr><td style="text-align:left;font-family:\'Inter\',sans-serif;">' + escH(r.descripcion||'—') + '</td><td>' + r.usuarios_distintos + '</td><td>' + fmtInt(r.total||0) + '</td>' +
+          '<td style="text-align:left;font-size:11px;color:var(--ink-soft);">' + (r.usuarios||[]).slice(0,10).map(escH).join(', ') + ((r.usuarios||[]).length>10?' …':'') + '</td></tr>';
+      });
+      html += '</tbody></table></div></div>';
+      el.innerHTML = html;
+    }
+    statusEl.textContent = (data?data.length:0) + ' documento(s) compartido(s) encontrado(s).'; statusEl.className = 'batch-status ok';
+  } catch(err){
+    statusEl.textContent = 'Error al analizar: ' + (err.message || err) + (String(err.message||'').includes('documentos_compartidos') ? ' — ¿ejecutaste el SQL de documentos_compartidos en Supabase?' : '');
+    statusEl.className = 'batch-status err';
+  }
+}
+$('btn-analizar-compartidos').addEventListener('click', analizarDocumentosCompartidos);
+
+// ---- Documentos repetidos por el mismo usuario ----
+async function analizarDocumentosRepetidos(){
+  const statusEl = $('dr-status');
+  if (!supabaseClient){ statusEl.textContent = 'Configura la base de datos primero (botón ⚙ arriba a la derecha).'; statusEl.className = 'batch-status err'; return; }
+  statusEl.textContent = 'Analizando…'; statusEl.className = 'batch-status loading';
+  try {
+    const { data, error } = await supabaseClient.rpc('documentos_repetidos', {
+      p_desde: $('dr-desde').value || null, p_hasta: $('dr-hasta').value || null,
+      p_min_veces: parseInt($('dr-min-veces').value,10) || 5
+    });
+    if (error) throw error;
+    const el = $('dr-results-area');
+    if (!data || !data.length){ el.innerHTML = '<div class="empty-state">No se encontraron documentos repetidos con estos criterios.</div>'; }
+    else {
+      let html = '<div class="table-wrap"><div class="table-head"><h2>Documentos repetidos el mismo día</h2><div class="meta"><span class="scope-tag">' + data.length + ' caso(s)</span></div></div>';
+      html += '<div class="historial-table-wrap"><table><thead><tr><th style="text-align:left;">Usuario</th><th style="text-align:left;">Documento</th><th style="text-align:left;">Día</th><th>Veces</th><th>Total hojas</th></tr></thead><tbody>';
+      data.forEach(r => {
+        html += '<tr><td style="text-align:left;font-family:\'Inter\',sans-serif;">' + escH(r.nombre||r.usuario) + ' <span style="color:var(--ink-soft);">(' + escH(r.usuario) + ')</span></td>' +
+          '<td style="text-align:left;font-family:\'Inter\',sans-serif;">' + escH(r.descripcion||'—') + '</td><td style="text-align:left;font-family:\'Inter\',sans-serif;">' + r.fecha_dia + '</td>' +
+          '<td>' + r.veces + '</td><td>' + fmtInt(r.total||0) + '</td></tr>';
+      });
+      html += '</tbody></table></div></div>';
+      el.innerHTML = html;
+    }
+    statusEl.textContent = (data?data.length:0) + ' caso(s) encontrado(s).'; statusEl.className = 'batch-status ok';
+  } catch(err){
+    statusEl.textContent = 'Error al analizar: ' + (err.message || err) + (String(err.message||'').includes('documentos_repetidos') ? ' — ¿ejecutaste el SQL de documentos_repetidos en Supabase?' : '');
+    statusEl.className = 'batch-status err';
+  }
+}
+$('btn-analizar-repetidos').addEventListener('click', analizarDocumentosRepetidos);
+
+// ---- Afinidad usuario-impresora ----
+async function analizarAfinidad(){
+  const statusEl = $('af-status');
+  if (!supabaseClient){ statusEl.textContent = 'Configura la base de datos primero (botón ⚙ arriba a la derecha).'; statusEl.className = 'batch-status err'; return; }
+  const corte = $('af-corte').value;
+  if (!corte){ statusEl.textContent = 'Elige una fecha de corte.'; statusEl.className = 'batch-status err'; return; }
+  const minPct = (parseFloat($('af-min-pct').value) || 20) / 100;
+  statusEl.textContent = 'Analizando histórico y periodo reciente…'; statusEl.className = 'batch-status loading';
+  try {
+    const corteAnterior = toISODate(new Date(new Date(corte + 'T00:00:00').getTime() - 86400000));
+    const [histRes, recRes] = await Promise.all([
+      supabaseClient.rpc('informe_usuario_dispositivo', { p_desde: null, p_hasta: corteAnterior }),
+      supabaseClient.rpc('informe_usuario_dispositivo', { p_desde: corte, p_hasta: null })
+    ]);
+    if (histRes.error) throw histRes.error;
+    if (recRes.error) throw recRes.error;
+
+    const histPorUsuario = {};
+    (histRes.data||[]).forEach(r => {
+      if (!histPorUsuario[r.usuario]) histPorUsuario[r.usuario] = { total: 0, dispositivos: {} };
+      histPorUsuario[r.usuario].total += Number(r.total)||0;
+      histPorUsuario[r.usuario].dispositivos[r.dispositivo] = (histPorUsuario[r.usuario].dispositivos[r.dispositivo]||0) + (Number(r.total)||0);
+    });
+    const recPorUsuario = {};
+    (recRes.data||[]).forEach(r => {
+      if (!recPorUsuario[r.usuario]) recPorUsuario[r.usuario] = { usuario: r.usuario, nombre: r.nombre, total: 0, dispositivos: {} };
+      recPorUsuario[r.usuario].total += Number(r.total)||0;
+      recPorUsuario[r.usuario].dispositivos[r.dispositivo] = (recPorUsuario[r.usuario].dispositivos[r.dispositivo]||0) + (Number(r.total)||0);
+    });
+
+    const hallazgos = [];
+    Object.values(recPorUsuario).forEach(u => {
+      const hist = histPorUsuario[u.usuario];
+      if (!hist || hist.total < 20) return; // sin línea base suficiente para comparar
+      Object.entries(u.dispositivos).forEach(([disp, total]) => {
+        const pctReciente = u.total > 0 ? total / u.total : 0;
+        const pctHistorico = hist.total > 0 ? (hist.dispositivos[disp] || 0) / hist.total : 0;
+        if (pctReciente >= minPct && pctHistorico < 0.05){
+          hallazgos.push({ usuario: u.usuario, nombre: u.nombre, dispositivo: disp, pctReciente, pctHistorico, hojasReciente: total });
+        }
+      });
+    });
+    hallazgos.sort((a,b) => b.pctReciente - a.pctReciente);
+
+    const el = $('af-results-area');
+    if (!hallazgos.length){ el.innerHTML = '<div class="empty-state">No se detectaron cambios de impresora habitual con estos criterios.</div>'; }
+    else {
+      let html = '<div class="table-wrap"><div class="table-head"><h2>Impresora inusual por usuario</h2><div class="meta"><span class="scope-tag">' + hallazgos.length + ' caso(s)</span></div></div>';
+      html += '<div class="historial-table-wrap"><table><thead><tr><th style="text-align:left;">Usuario</th><th style="text-align:left;">Impresora nueva/inusual</th><th>% del periodo reciente</th><th>% histórico previo</th><th>Hojas recientes</th></tr></thead><tbody>';
+      hallazgos.forEach(h => {
+        html += '<tr><td style="text-align:left;font-family:\'Inter\',sans-serif;">' + escH(h.nombre||h.usuario) + ' <span style="color:var(--ink-soft);">(' + escH(h.usuario) + ')</span></td>' +
+          '<td style="text-align:left;font-family:\'Inter\',sans-serif;">' + escH(h.dispositivo) + '</td><td>' + (h.pctReciente*100).toFixed(0) + '%</td><td>' + (h.pctHistorico*100).toFixed(0) + '%</td><td>' + fmtInt(h.hojasReciente) + '</td></tr>';
+      });
+      html += '</tbody></table></div></div>';
+      el.innerHTML = html;
+    }
+    statusEl.textContent = hallazgos.length + ' caso(s) de impresora inusual encontrado(s).'; statusEl.className = 'batch-status ok';
+  } catch(err){
+    statusEl.textContent = 'Error al analizar: ' + (err.message || err) + (String(err.message||'').includes('informe_usuario_dispositivo') ? ' — ¿ejecutaste el SQL de informe_usuario_dispositivo en Supabase?' : '');
+    statusEl.className = 'batch-status err';
+  }
+}
+$('btn-analizar-afinidad').addEventListener('click', analizarAfinidad);
+
+// ---- Score de riesgo combinado ----
+async function analizarScoreRiesgo(){
+  const statusEl = $('sr-status');
+  if (!supabaseClient){ statusEl.textContent = 'Configura la base de datos primero (botón ⚙ arriba a la derecha).'; statusEl.className = 'batch-status err'; return; }
+  const desde = $('sr-desde').value || null, hasta = $('sr-hasta').value || null;
+  statusEl.textContent = 'Calculando score combinado (puede tardar unos segundos)…'; statusEl.className = 'batch-status loading';
+  try {
+    const [daily, personales, fueraHorario, informeUsuario] = await Promise.all([
+      fetchDailyTotals(),
+      supabaseClient.rpc('impresiones_personales', { p_desde: desde, p_hasta: hasta, p_palabras: [] }).then(r => { if (r.error) throw r.error; return r.data||[]; }),
+      supabaseClient.rpc('impresiones_fuera_horario', { p_desde: desde, p_hasta: hasta, p_hora_inicio: 8, p_hora_fin: 18, p_incluir_finde: true }).then(r => { if (r.error) throw r.error; return r.data||[]; }),
+      supabaseClient.rpc('informe_por_usuario', { p_desde: desde, p_hasta: hasta }).then(r => { if (r.error) throw r.error; return r.data||[]; })
+    ]);
+    const dailyFiltrado = (desde||hasta) ? daily.filter(d => (!desde || d.fecha_dia >= desde) && (!hasta || d.fecha_dia <= hasta)) : daily;
+    const anomalias = detectarAnomalias(dailyFiltrado, { zThreshold: 2.5, volumenMin: 30, diasMin: 5 });
+
+    const scores = {};
+    const ensure = (usuario, nombre) => { if (!scores[usuario]) scores[usuario] = { usuario, nombre: nombre||usuario, anomalias:0, personales:0, fueraHorario:0, colorPct:0, total:0, score:0 }; return scores[usuario]; };
+    anomalias.forEach(a => { ensure(a.usuario, a.nombre).anomalias++; });
+    personales.forEach(p => { ensure(p.usuario, p.nombre).personales++; });
+    fueraHorario.forEach(f => { ensure(f.usuario, f.nombre).fueraHorario++; });
+    const porUsuarioColor = {};
+    informeUsuario.forEach(r => {
+      if (!porUsuarioColor[r.usuario]) porUsuarioColor[r.usuario] = { total:0, color:0, nombre:r.nombre };
+      porUsuarioColor[r.usuario].total += Number(r.total)||0;
+      porUsuarioColor[r.usuario].color += Number(r.color)||0;
+    });
+    Object.entries(porUsuarioColor).forEach(([usuario, v]) => {
+      const s = ensure(usuario, v.nombre);
+      s.total = v.total;
+      s.colorPct = v.total > 0 ? v.color / v.total : 0;
+    });
+
+    Object.values(scores).forEach(s => {
+      s.score = s.anomalias*3 + s.personales*2 + s.fueraHorario*1 + (s.colorPct>0.5?2:s.colorPct>0.25?1:0);
+    });
+    const ranking = Object.values(scores).filter(s => s.score > 0).sort((a,b) => b.score - a.score).slice(0,50);
+
+    const el = $('sr-results-area');
+    if (!ranking.length){ el.innerHTML = '<div class="empty-state">No se encontraron señales de riesgo con estos criterios.</div>'; }
+    else {
+      let html = '<div class="table-wrap"><div class="table-head"><h2>Ranking de riesgo por usuario</h2><div class="meta"><span class="scope-tag">' + ranking.length + ' usuario(s)</span></div></div>';
+      html += '<div class="historial-table-wrap"><table><thead><tr><th style="text-align:left;">Usuario</th><th>Anomalías</th><th>Personales</th><th>Fuera de horario</th><th>% Color</th><th>Score</th></tr></thead><tbody>';
+      ranking.forEach(s => {
+        html += '<tr><td style="text-align:left;font-family:\'Inter\',sans-serif;">' + escH(s.nombre||s.usuario) + ' <span style="color:var(--ink-soft);">(' + escH(s.usuario) + ')</span></td>' +
+          '<td>' + s.anomalias + '</td><td>' + s.personales + '</td><td>' + s.fueraHorario + '</td><td>' + (s.colorPct*100).toFixed(0) + '%</td><td><strong>' + s.score.toFixed(1) + '</strong></td></tr>';
+      });
+      html += '</tbody></table></div></div>';
+      html += '<p style="font-size:11px;color:var(--ink-soft);margin-top:6px;">Score = anomalías×3 + personales×2 + fuera de horario×1 + bonus por % de color. Es una priorización orientativa, no una acusación — revisa el detalle en las otras pestañas antes de sacar conclusiones.</p>';
+      el.innerHTML = html;
+    }
+    statusEl.textContent = ranking.length + ' usuario(s) con señales de riesgo.'; statusEl.className = 'batch-status ok';
+  } catch(err){
+    statusEl.textContent = 'Error al calcular el score: ' + (err.message || err);
+    statusEl.className = 'batch-status err';
+  }
+}
+$('btn-analizar-score').addEventListener('click', analizarScoreRiesgo);
 
 // ---------- Mutable reference data (Cecos.xlsx), replaceable via upload ----------
 let currentUsers = CECOS_DATA.users.map(u => ({ usuario: u.usuario.trim(), nombre: u.nombre || '', ceco: (u.ceco || '').trim() }));
@@ -1434,20 +2067,14 @@ $('btn-guardar-cu').addEventListener('click', async () => {
   updateBaseCountLabel();
 
   const cecoConocido = CONSUMO_SET.has(ceco) || PECUARIA_SET.has(ceco);
-  statusEl.innerHTML = 'Guardado localmente' + (cecoConocido ? '' : ' — "' + ceco + '" es un Centro de Costo nuevo, todavía sin ámbito: ' +
-    '<button class="btn-detalle" id="cu-marcar-consumo" style="margin:4px 4px 0 0;">Marcar como Consumo</button>' +
-    '<button class="btn-detalle" id="cu-marcar-pecuaria" style="margin:4px 0 0;">Marcar como Pecuaria</button>');
+  statusEl.textContent = 'Guardado localmente' + (cecoConocido ? '' : ' — "' + ceco + '" es un Centro de Costo nuevo, todavía sin ámbito.');
   statusEl.className = 'batch-status';
 
   if (supabaseClient){
     try {
       await guardarUnUsuarioEnSupabase(usuario, nombre, ceco);
-      statusEl.textContent = (cecoConocido ? '' : '') + 'Usuario guardado y sincronizado con Supabase.' + (cecoConocido ? '' : ' Recuerda clasificar el nuevo Centro de Costo (abajo).');
+      statusEl.textContent = 'Usuario guardado y sincronizado con Supabase.' + (cecoConocido ? '' : ' Recuerda clasificar el nuevo Centro de Costo (abajo).');
       statusEl.className = 'batch-status ok';
-      if (!cecoConocido){
-        statusEl.innerHTML += '<br><button class="btn-detalle" id="cu-marcar-consumo" style="margin:4px 4px 0 0;">Marcar "' + ceco + '" como Consumo</button>' +
-          '<button class="btn-detalle" id="cu-marcar-pecuaria" style="margin:4px 0 0;">Marcar como Pecuaria</button>';
-      }
     } catch(err){
       statusEl.textContent = 'Se guardó localmente, pero falló la sincronización con Supabase: ' + (err.message||err);
       statusEl.className = 'batch-status err';
@@ -1456,20 +2083,27 @@ $('btn-guardar-cu').addEventListener('click', async () => {
     statusEl.textContent += ' (configura la base de datos con ⚙ para que esto se comparta con los demás).';
   }
 
-  const bindMarcar = (id, ambito) => {
-    const b = $(id);
-    if (!b) return;
-    b.addEventListener('click', async () => {
-      if (ambito === 'consumo') CONSUMO_SET.add(ceco); else PECUARIA_SET.add(ceco);
-      populateCecosDatalist();
-      if (supabaseClient){
-        try { await marcarCecoAmbitoEnSupabase(ceco, ambito); statusEl.textContent = '"' + ceco + '" clasificado como ' + (ambito==='consumo'?'Consumo':'Pecuaria') + ' y sincronizado.'; statusEl.className = 'batch-status ok'; }
-        catch(err){ statusEl.textContent = 'No se pudo sincronizar la clasificación: ' + (err.message||err); statusEl.className = 'batch-status err'; }
-      }
-    });
-  };
-  bindMarcar('cu-marcar-consumo', 'consumo');
-  bindMarcar('cu-marcar-pecuaria', 'pecuaria');
+  // Los botones de clasificación se agregan una sola vez, al final, sin importar si Supabase
+  // estaba configurado o si la sincronización falló — así nunca quedan duplicados ni se pierden.
+  if (!cecoConocido){
+    statusEl.innerHTML += '<br><button class="btn-detalle" id="cu-marcar-consumo" style="margin:4px 4px 0 0;">Marcar "' + escH(ceco) + '" como Consumo</button>' +
+      '<button class="btn-detalle" id="cu-marcar-pecuaria" style="margin:4px 0 0;">Marcar como Pecuaria</button>';
+
+    const bindMarcar = (id, ambito) => {
+      const b = $(id);
+      if (!b) return;
+      b.addEventListener('click', async () => {
+        if (ambito === 'consumo') CONSUMO_SET.add(ceco); else PECUARIA_SET.add(ceco);
+        populateCecosDatalist();
+        if (supabaseClient){
+          try { await marcarCecoAmbitoEnSupabase(ceco, ambito); statusEl.textContent = '"' + ceco + '" clasificado como ' + (ambito==='consumo'?'Consumo':'Pecuaria') + ' y sincronizado.'; statusEl.className = 'batch-status ok'; }
+          catch(err){ statusEl.textContent = 'No se pudo sincronizar la clasificación: ' + (err.message||err); statusEl.className = 'batch-status err'; }
+        }
+      });
+    };
+    bindMarcar('cu-marcar-consumo', 'consumo');
+    bindMarcar('cu-marcar-pecuaria', 'pecuaria');
+  }
 
   $('cu-usuario').value = ''; $('cu-nombre').value = ''; $('cu-ceco').value = '';
 });
@@ -1834,7 +2468,7 @@ function render(result){
   html += '<table><thead><tr><th>Centro de costo</th><th>Impresiones</th><th>Costo interno</th><th>%</th><th>A pagar USD</th><th>A pagar PEN</th></tr></thead><tbody>';
   table.forEach(r => {
     const barWidth = Math.max(4, Math.round((r.pct / maxPct) * 46));
-    html += '<tr><td>' + r.ceco + '</td><td>' + fmtInt(r.total) + '</td><td>$ ' + r.costo.toFixed(2) + '</td>' +
+    html += '<tr><td>' + escH(r.ceco) + '</td><td>' + fmtInt(r.total) + '</td><td>$ ' + r.costo.toFixed(2) + '</td>' +
       '<td><span class="pct-bar" style="width:' + barWidth + 'px"></span>' + fmtPct(r.pct) + '</td>' +
       '<td>' + fmtUSD(r.usd) + '</td><td>' + fmtPEN(r.pen) + '</td></tr>';
   });
@@ -1844,7 +2478,7 @@ function render(result){
   html += '</tbody><tfoot><tr><td>Total</td><td>' + fmtInt(totals.total) + '</td><td>$ ' + totals.costo.toFixed(2) + '</td><td>100.00%</td><td>' + fmtUSD(totals.usd) + '</td><td>' + fmtPEN(totals.pen) + '</td></tr></tfoot></table></div>';
 
   if (unassignedRows > 0){
-    html += '<div class="alert"><strong>Usuarios sin Centro de Costo</strong>' + unassignedRows + ' registro(s) de ' + unassignedUsers.length + ' usuario(s) no figuran en la base de Cecos y no se incluyeron en el prorrateo: ' + unassignedUsers.slice(0,10).join(', ') + (unassignedUsers.length > 10 ? '…' : '') + '.' +
+    html += '<div class="alert"><strong>Usuarios sin Centro de Costo</strong>' + unassignedRows + ' registro(s) de ' + unassignedUsers.length + ' usuario(s) no figuran en la base de Cecos y no se incluyeron en el prorrateo: ' + unassignedUsers.slice(0,10).map(escH).join(', ') + (unassignedUsers.length > 10 ? '…' : '') + '.' +
       '<div class="alert-actions"><button class="btn-alert" id="btn-download-cecos">Descargar plantilla CECOS.xlsx para completar</button></div></div>';
   }
   if (state.scope !== 'todos'){
@@ -2125,7 +2759,7 @@ function barRows(items, opts){
         delta = '<span class="br-delta up">nuevo</span>';
       }
     }
-    return '<div class="barrow"><div class="br-label" title="' + it.label + '">' + it.label + '</div>' +
+    return '<div class="barrow"><div class="br-label" title="' + escH(it.label) + '">' + escH(it.label) + '</div>' +
       '<div class="br-track"><div class="br-fill seg-bn" style="width:' + bnW + '%"></div>' +
       '<div class="br-fill seg-color" style="width:' + colorW + '%;margin-left:' + bnW + '%;position:absolute;top:0;"></div></div>' +
       '<div class="br-value">' + fmtInt(it.total) + delta + '</div></div>';
@@ -2189,6 +2823,13 @@ function computeChanges(prev, curr, thresholdPct){
     const nombre = (curr.byUser[k] && curr.byUser[k].nombre) || (prev.byUser[k] && prev.byUser[k].nombre) || k;
     pushChangeRow(rows, 'Usuario', nombre + ' (' + k + ')', p, c, thresholdPct);
   });
+  const deviceKeys = new Set([...Object.keys(prev.byDevice||{}), ...Object.keys(curr.byDevice||{})]);
+  deviceKeys.forEach(k => {
+    const p = prev.byDevice[k] ? prev.byDevice[k].total : 0;
+    const c = curr.byDevice[k] ? curr.byDevice[k].total : 0;
+    const label = (curr.byDevice[k] && curr.byDevice[k].label) || (prev.byDevice[k] && prev.byDevice[k].label) || k;
+    pushChangeRow(rows, 'Impresora', label, p, c, thresholdPct);
+  });
   rows.sort((a,b) => Math.abs(b.pct) - Math.abs(a.pct));
   return rows;
 }
@@ -2210,7 +2851,7 @@ function colorFootprintHTML(cecoList, rateBN, rateColor){
 
 function linearProjection(values){
   const n = values.length;
-  if (n === 0) return { nextVal: 0, slope: 0 };
+  if (n === 0) return { nextVal: 0, slope: 0, low: 0, high: 0 };
   const xs = values.map((_,i) => i);
   const xMean = xs.reduce((a,b) => a+b, 0) / n;
   const yMean = values.reduce((a,b) => a+b, 0) / n;
@@ -2218,8 +2859,14 @@ function linearProjection(values){
   for (let i = 0; i < n; i++){ num += (xs[i]-xMean)*(values[i]-yMean); den += (xs[i]-xMean)*(xs[i]-xMean); }
   const slope = den === 0 ? 0 : num / den;
   const intercept = yMean - slope * xMean;
-  const nextVal = intercept + slope * n;
-  return { slope, nextVal: Math.max(0, nextVal) };
+  const nextVal = Math.max(0, intercept + slope * n);
+  // Intervalo de confianza aproximado (~90%) a partir del error residual del ajuste —
+  // comunica cuánta incertidumbre real hay detrás del número proyectado, no una cifra exacta.
+  let sse = 0;
+  for (let i = 0; i < n; i++){ const pred = intercept + slope*xs[i]; sse += (values[i]-pred)*(values[i]-pred); }
+  const stderr = n > 2 ? Math.sqrt(sse / (n - 2)) : (n > 0 ? Math.sqrt(sse / n) : 0);
+  const margen = 1.64 * stderr; // ~90% con distribución aprox. normal de los residuos
+  return { slope, nextVal, low: Math.max(0, nextVal - margen), high: nextVal + margen };
 }
 
 const MESES_ES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
@@ -2268,13 +2915,13 @@ function buildExecReportHTML(latest, previous, cecoList, userList, changes){
   html += '</div>';
 
   html += '<div class="exec-cols">';
-  html += '<div><h3>Top 5 Centros de Costo</h3><ol>' + cecoList.slice(0,5).map(c => '<li>' + c.ceco + ' \u2014 ' + fmtInt(c.total) + '</li>').join('') + '</ol></div>';
-  html += '<div><h3>Top 5 Usuarios</h3><ol>' + userList.slice(0,5).map(u => '<li>' + (u.nombre||u.usuario) + ' \u2014 ' + fmtInt(u.total) + '</li>').join('') + '</ol></div>';
+  html += '<div><h3>Top 5 Centros de Costo</h3><ol>' + cecoList.slice(0,5).map(c => '<li>' + escH(c.ceco) + ' \u2014 ' + fmtInt(c.total) + '</li>').join('') + '</ol></div>';
+  html += '<div><h3>Top 5 Usuarios</h3><ol>' + userList.slice(0,5).map(u => '<li>' + escH(u.nombre||u.usuario) + ' \u2014 ' + fmtInt(u.total) + '</li>').join('') + '</ol></div>';
   html += '</div>';
 
   if (changes && changes.length){
     html += '<div style="margin-top:12px;"><h3 style="font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:var(--ink-soft);margin:0 0 6px;">Cambios m\u00e1s relevantes</h3><ol style="margin:0;padding-left:18px;font-size:12px;">' +
-      changes.slice(0,3).map(r => '<li>' + r.nombre + ' \u2014 ' + r.tagText + (r.tagText==='Aumento'||r.tagText==='Disminuci\u00f3n' ? ' (' + (r.pct>=0?'+':'') + (r.pct*100).toFixed(0) + '%)' : '') + '</li>').join('') + '</ol></div>';
+      changes.slice(0,3).map(r => '<li>' + escH(r.nombre) + ' \u2014 ' + r.tagText + (r.tagText==='Aumento'||r.tagText==='Disminuci\u00f3n' ? ' (' + (r.pct>=0?'+':'') + (r.pct*100).toFixed(0) + '%)' : '') + '</li>').join('') + '</ol></div>';
   }
   html += '</div>';
   return html;
@@ -2367,14 +3014,20 @@ function renderInforme(){
       '<datalist id="dl-usuarios">' + Object.keys(allUsersMap).map(u => '<option value="' + u + ' (' + allUsersMap[u].replace(/"/g,'&quot;') + ')">').join('') + '</datalist></div>';
     html += '<div id="usuario-trend-chart" style="min-height:150px;"></div></div>';
 
+    html += '<div><h2 style="font-size:14px;">Tendencia por Impresora</h2>';
+    html += '<div class="dash-controls"><select id="select-dispositivo-trend"><option value="">Selecciona\u2026</option>' +
+      deviceList.map(d => '<option value="' + d.device.replace(/"/g,'&quot;') + '">' + d.label + '</option>').join('') + '</select></div>';
+    html += '<div id="dispositivo-trend-chart" style="min-height:150px;"></div></div>';
+
     html += '</div></div>';
 
     // ---- Proyección ----
     if (periods.length >= 3){
       const totalProj = linearProjection(totals);
       html += '<div class="dash-section"><h2>Proyecci\u00f3n del pr\u00f3ximo periodo</h2><p class="dash-sub">Estimaci\u00f3n lineal simple a partir de los ' + periods.length + ' periodos cargados \u2014 usar como referencia, no como cifra exacta</p>';
-      html += '<div class="summary-row" style="grid-template-columns:repeat(2,1fr);margin-bottom:14px;">';
+      html += '<div class="summary-row" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px;">';
       html += '<div class="card"><div class="label">Volumen total proyectado</div><div class="value">' + fmtInt(Math.round(totalProj.nextVal)) + '<small> impresiones</small></div></div>';
+      html += '<div class="card"><div class="label">Rango probable (≈90%)</div><div class="value" style="font-size:16px;">' + fmtInt(Math.round(totalProj.low)) + ' – ' + fmtInt(Math.round(totalProj.high)) + '</div></div>';
       html += '<div class="card"><div class="label">Tendencia</div><div class="value" style="font-size:16px;">' + (totalProj.slope >= 0 ? '\u25b2 Creciente' : '\u25bc Decreciente') + '</div></div>';
       html += '</div>';
       const topProj = cecoList.slice(0,8).map(c => {
@@ -2406,7 +3059,7 @@ function renderInforme(){
     } else {
       html += '<table class="changes-table"><thead><tr><th>Tipo</th><th>Nombre</th><th class="num">Periodo anterior</th><th class="num">Periodo actual</th><th class="num">Variaci\u00f3n</th><th>Estado</th></tr></thead><tbody>';
       changes.forEach(r => {
-        html += '<tr><td>' + r.tipo + '</td><td class="name">' + r.nombre + '</td><td class="num">' + fmtInt(r.p) + '</td><td class="num">' + fmtInt(r.c) + '</td><td class="num">' + (r.tagText==='Nuevo'||r.tagText==='Dej\u00f3 de imprimir' ? '\u2014' : (r.pct>=0?'+':'') + (r.pct*100).toFixed(0) + '%') + '</td><td><span class="tag-change ' + r.tagClass + '">' + r.tagText + '</span></td></tr>';
+        html += '<tr><td>' + r.tipo + '</td><td class="name">' + escH(r.nombre) + '</td><td class="num">' + fmtInt(r.p) + '</td><td class="num">' + fmtInt(r.c) + '</td><td class="num">' + (r.tagText==='Nuevo'||r.tagText==='Dej\u00f3 de imprimir' ? '\u2014' : (r.pct>=0?'+':'') + (r.pct*100).toFixed(0) + '%') + '</td><td><span class="tag-change ' + r.tagClass + '">' + r.tagText + '</span></td></tr>';
       });
       html += '</tbody></table></div>';
     }
@@ -2440,6 +3093,13 @@ function renderInforme(){
     if (!usuario){ $('usuario-trend-chart').innerHTML = ''; return; }
     const values = periods.map(p => p.byUser[usuario] ? p.byUser[usuario].total : 0);
     $('usuario-trend-chart').innerHTML = svgTrend(labels_or(periods), values);
+  });
+
+  const deviceSel = $('select-dispositivo-trend');
+  if (deviceSel) deviceSel.addEventListener('change', () => {
+    if (!deviceSel.value){ $('dispositivo-trend-chart').innerHTML = ''; return; }
+    const values = periods.map(p => p.byDevice[deviceSel.value] ? p.byDevice[deviceSel.value].total : 0);
+    $('dispositivo-trend-chart').innerHTML = svgTrend(labels_or(periods), values);
   });
 }
 
