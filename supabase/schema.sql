@@ -32,6 +32,7 @@ create table if not exists printer_records (
 create index if not exists idx_printer_records_usuario on printer_records (usuario);
 create index if not exists idx_printer_records_fecha on printer_records (fecha);
 create index if not exists idx_printer_batches_nombre on printer_batches (nombre_archivo);
+create index if not exists idx_printer_records_descripcion on printer_records (descripcion);
 
 -- RLS: se habilita porque Supabase lo exige para tablas expuestas por la API,
 -- pero se deja en modo permisivo porque el aplicativo es interno y usa la
@@ -229,3 +230,190 @@ language sql stable as $$
   group by 1;
 $$;
 grant execute on function public.informe_por_empresa(date, date) to anon, authenticated;
+
+-- =====================================================================
+-- Detección de impresiones personales por nombre de documento (descripción).
+-- Combina 3 criterios: extensión de foto, patrones típicos de cámara/celular
+-- (siempre activos), y una lista de palabras clave configurable desde la app.
+-- =====================================================================
+create or replace function public.impresiones_personales(
+  p_desde date default null,
+  p_hasta date default null,
+  p_palabras text[] default array[]::text[]
+)
+returns table (
+  usuario text,
+  nombre text,
+  fecha timestamptz,
+  descripcion text,
+  dispositivo text,
+  tipo text,
+  total integer,
+  motivo text
+)
+language sql stable as $$
+  select
+    r.usuario,
+    r.nombre,
+    r.fecha,
+    r.descripcion,
+    r.dispositivo,
+    r.tipo,
+    r.total,
+    case
+      when r.descripcion ~* '\.(jpe?g|png|gif|bmp|heic|heif|webp|tiff?)($|[^a-z0-9])' then 'extension_foto'
+      when r.descripcion ~* '(img_?[0-9]+|dsc_?[0-9]+|pxl_?[0-9]+|whatsapp image|screenshot|captura de pantalla|signal-[0-9]{4}-[0-9]{2}-[0-9]{2}|photo_?[0-9]+|image_?[0-9]+|[0-9]{8}_[0-9]{6})' then 'patron_generico'
+      else 'palabra_clave'
+    end as motivo
+  from printer_records r
+  where r.descripcion is not null and btrim(r.descripcion) <> ''
+    and (p_desde is null or (r.fecha at time zone 'America/Lima')::date >= p_desde)
+    and (p_hasta is null or (r.fecha at time zone 'America/Lima')::date <= p_hasta)
+    and (
+      r.descripcion ~* '\.(jpe?g|png|gif|bmp|heic|heif|webp|tiff?)($|[^a-z0-9])'
+      or r.descripcion ~* '(img_?[0-9]+|dsc_?[0-9]+|pxl_?[0-9]+|whatsapp image|screenshot|captura de pantalla|signal-[0-9]{4}-[0-9]{2}-[0-9]{2}|photo_?[0-9]+|image_?[0-9]+|[0-9]{8}_[0-9]{6})'
+      or (p_palabras is not null and array_length(p_palabras,1) > 0
+          and exists (select 1 from unnest(p_palabras) kw where r.descripcion ilike '%'||kw||'%'))
+    )
+  order by r.fecha desc
+  limit 5000;
+$$;
+grant execute on function public.impresiones_personales(date, date, text[]) to anon, authenticated;
+
+-- =====================================================================
+-- Patrones avanzados: fuera de horario, ráfagas, documentos compartidos
+-- entre usuarios, documentos repetidos por el mismo usuario, y afinidad
+-- usuario-impresora (para detectar dispositivos inusuales).
+-- =====================================================================
+
+-- Impresiones fuera de horario laboral y/o en fin de semana (hora Lima)
+create or replace function public.impresiones_fuera_horario(
+  p_desde date default null,
+  p_hasta date default null,
+  p_hora_inicio int default 8,
+  p_hora_fin int default 18,
+  p_incluir_finde boolean default true
+)
+returns table(usuario text, nombre text, fecha timestamptz, descripcion text, dispositivo text, tipo text, total integer, motivo text)
+language sql stable as $$
+  select r.usuario, r.nombre, r.fecha, r.descripcion, r.dispositivo, r.tipo, r.total,
+    case
+      when p_incluir_finde and extract(isodow from (r.fecha at time zone 'America/Lima')) in (6,7) then 'fin_de_semana'
+      else 'fuera_horario'
+    end as motivo
+  from printer_records r
+  where r.fecha is not null
+    and (p_desde is null or (r.fecha at time zone 'America/Lima')::date >= p_desde)
+    and (p_hasta is null or (r.fecha at time zone 'America/Lima')::date <= p_hasta)
+    and (
+      (p_incluir_finde and extract(isodow from (r.fecha at time zone 'America/Lima')) in (6,7))
+      or extract(hour from (r.fecha at time zone 'America/Lima')) < p_hora_inicio
+      or extract(hour from (r.fecha at time zone 'America/Lima')) >= p_hora_fin
+    )
+  order by r.fecha desc
+  limit 5000;
+$$;
+grant execute on function public.impresiones_fuera_horario(date,date,int,int,boolean) to anon, authenticated;
+
+-- Ráfagas: muchos trabajos del mismo usuario en una ventana corta de tiempo
+create or replace function public.rafagas_impresion(
+  p_desde date default null,
+  p_hasta date default null,
+  p_minutos int default 10,
+  p_min_trabajos int default 8
+)
+returns table(usuario text, nombre text, inicio timestamptz, fin timestamptz, trabajos bigint, hojas bigint)
+language sql stable as $$
+  with base as (
+    select r.usuario, r.nombre, r.fecha, r.total,
+      lag(r.fecha) over (partition by r.usuario order by r.fecha) as fecha_prev
+    from printer_records r
+    where r.fecha is not null
+      and (p_desde is null or (r.fecha at time zone 'America/Lima')::date >= p_desde)
+      and (p_hasta is null or (r.fecha at time zone 'America/Lima')::date <= p_hasta)
+  ),
+  marcado as (
+    select *,
+      case when fecha_prev is null or fecha - fecha_prev > (p_minutos || ' minutes')::interval
+        then 1 else 0 end as nuevo_grupo
+    from base
+  ),
+  agrupado as (
+    select *, sum(nuevo_grupo) over (partition by usuario order by fecha) as grupo_id
+    from marcado
+  )
+  select usuario,
+    (array_agg(nombre) filter (where nombre is not null and nombre <> ''))[1] as nombre,
+    min(fecha) as inicio, max(fecha) as fin,
+    count(*)::bigint as trabajos, sum(total)::bigint as hojas
+  from agrupado
+  group by usuario, grupo_id
+  having count(*) >= p_min_trabajos
+  order by trabajos desc
+  limit 500;
+$$;
+grant execute on function public.rafagas_impresion(date,date,int,int) to anon, authenticated;
+
+-- Mismo documento (por nombre) impreso por muchos usuarios distintos
+create or replace function public.documentos_compartidos(
+  p_desde date default null,
+  p_hasta date default null,
+  p_min_usuarios int default 3
+)
+returns table(descripcion text, usuarios_distintos bigint, total bigint, usuarios text[])
+language sql stable as $$
+  select r.descripcion,
+    count(distinct r.usuario)::bigint as usuarios_distintos,
+    sum(r.total)::bigint as total,
+    array_agg(distinct r.usuario) as usuarios
+  from printer_records r
+  where r.descripcion is not null and btrim(r.descripcion) <> ''
+    and (p_desde is null or (r.fecha at time zone 'America/Lima')::date >= p_desde)
+    and (p_hasta is null or (r.fecha at time zone 'America/Lima')::date <= p_hasta)
+  group by r.descripcion
+  having count(distinct r.usuario) >= p_min_usuarios
+  order by usuarios_distintos desc, total desc
+  limit 500;
+$$;
+grant execute on function public.documentos_compartidos(date,date,int) to anon, authenticated;
+
+-- Mismo documento reimpreso muchas veces por el mismo usuario el mismo día
+create or replace function public.documentos_repetidos(
+  p_desde date default null,
+  p_hasta date default null,
+  p_min_veces int default 5
+)
+returns table(usuario text, nombre text, descripcion text, fecha_dia date, veces bigint, total bigint)
+language sql stable as $$
+  select r.usuario,
+    (array_agg(r.nombre) filter (where r.nombre is not null and r.nombre <> ''))[1] as nombre,
+    r.descripcion,
+    (r.fecha at time zone 'America/Lima')::date as fecha_dia,
+    count(*)::bigint as veces,
+    sum(r.total)::bigint as total
+  from printer_records r
+  where r.descripcion is not null and btrim(r.descripcion) <> '' and r.fecha is not null
+    and (p_desde is null or (r.fecha at time zone 'America/Lima')::date >= p_desde)
+    and (p_hasta is null or (r.fecha at time zone 'America/Lima')::date <= p_hasta)
+  group by r.usuario, r.descripcion, (r.fecha at time zone 'America/Lima')::date
+  having count(*) >= p_min_veces
+  order by veces desc
+  limit 500;
+$$;
+grant execute on function public.documentos_repetidos(date,date,int) to anon, authenticated;
+
+-- Volumen por usuario y por dispositivo (para detectar afinidad/cambio de impresora habitual)
+create or replace function public.informe_usuario_dispositivo(p_desde date default null, p_hasta date default null)
+returns table(usuario text, nombre text, dispositivo text, total bigint)
+language sql stable as $$
+  select r.usuario,
+    (array_agg(r.nombre) filter (where r.nombre is not null and r.nombre <> ''))[1] as nombre,
+    coalesce(nullif(r.dispositivo,''), nullif(r.serie,''), 'Desconocido') as dispositivo,
+    sum(r.total)::bigint as total
+  from printer_records r
+  where r.fecha is not null
+    and (p_desde is null or (r.fecha at time zone 'America/Lima')::date >= p_desde)
+    and (p_hasta is null or (r.fecha at time zone 'America/Lima')::date <= p_hasta)
+  group by r.usuario, coalesce(nullif(r.dispositivo,''), nullif(r.serie,''), 'Desconocido');
+$$;
+grant execute on function public.informe_usuario_dispositivo(date, date) to anon, authenticated;
