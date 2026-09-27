@@ -34,6 +34,14 @@ create index if not exists idx_printer_records_fecha on printer_records (fecha);
 create index if not exists idx_printer_batches_nombre on printer_batches (nombre_archivo);
 create index if not exists idx_printer_records_descripcion on printer_records (descripcion);
 
+-- Índice de trigramas para acelerar las búsquedas ILIKE '%patrón%' sobre
+-- descripcion (usadas por impresiones_personales, documentos_repetidos y
+-- documentos_compartidos). El índice B-tree de arriba no ayuda a ese tipo
+-- de búsqueda con comodín a ambos lados.
+create extension if not exists pg_trgm;
+create index if not exists idx_printer_records_descripcion_trgm
+  on printer_records using gin (descripcion gin_trgm_ops);
+
 -- RLS: se habilita porque Supabase lo exige para tablas expuestas por la API,
 -- pero se deja en modo permisivo porque el aplicativo es interno y usa la
 -- anon key solo para leer/escribir estas dos tablas. Si el archivo HTML se
