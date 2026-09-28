@@ -704,6 +704,17 @@ tfoot td:first-child{text-align:left;font-family:'Space Grotesk',sans-serif;}
       <button class="btn-primary" style="margin:0 0 0 32px;width:auto;padding:11px 20px;" id="btn-sinceco">Buscar usuarios sin CeCo</button>
     </div>
     <div id="sinceco-results-area"></div>
+
+    <div class="panel" style="margin-top:24px;">
+      <div class="step-head" style="margin-bottom:12px;"><div class="step-num">•</div><div class="step-title">Editar usuarios y Centros de Costo</div></div>
+      <div class="step-sub" style="margin:0 0 14px 32px;">Busca cualquier usuario de la base, corrige su nombre o su Centro de Costo, o elimínalo. Los cambios se guardan en Supabase y valen para todos.</div>
+      <div style="margin:0 0 12px 32px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+        <input type="text" id="eu-filtro" placeholder="Buscar por usuario, nombre o CeCo…" style="min-width:280px;padding:9px 12px;border:1px solid var(--line, #ccc);border-radius:8px;">
+        <label style="font-size:13px;display:flex;gap:6px;align-items:center;"><input type="checkbox" id="eu-solo-sin-ambito"> Solo CeCo sin ámbito (Consumo/Pecuaria)</label>
+        <span id="eu-contador" class="hint" style="margin:0;"></span>
+      </div>
+      <div id="eu-results-area"></div>
+    </div>
   </div>
 
   <div id="view-cargas" class="view">
@@ -3483,6 +3494,84 @@ async function cargarSinCeco(){
   }));
 }
 $('btn-sinceco').addEventListener('click', cargarSinCeco);
+
+// ---- Editar usuarios existentes y sus Centros de Costo ----
+async function eliminarUnUsuarioEnSupabase(usuario){
+  const { error } = await supabaseClient.from('ceco_users').delete().eq('usuario', usuario);
+  if (error) throw error;
+}
+function ambitoDeCeco(ceco){
+  if (!ceco) return '';
+  if (CONSUMO_SET.has(ceco)) return 'Consumo';
+  if (PECUARIA_SET.has(ceco)) return 'Pecuaria';
+  return '';
+}
+function renderEditarUsuarios(){
+  const out = $('eu-results-area'); if (!out) return;
+  const q = ($('eu-filtro').value || '').trim().toLowerCase();
+  const soloSin = $('eu-solo-sin-ambito').checked;
+  const MAX = 150;
+  let lista = currentUsers.filter(u => {
+    if (soloSin && (!u.ceco || ambitoDeCeco(u.ceco))) return false;
+    if (!q) return true;
+    return (u.usuario||'').toLowerCase().includes(q) || (u.nombre||'').toLowerCase().includes(q) || (u.ceco||'').toLowerCase().includes(q);
+  }).sort((a,b) => (a.usuario||'').localeCompare(b.usuario||'', 'es'));
+  const total = lista.length;
+  const visibles = lista.slice(0, MAX);
+  $('eu-contador').textContent = total + ' usuario(s)' + (total > MAX ? ' — mostrando los primeros ' + MAX + ', afina la búsqueda' : '');
+  const cecos = [...new Set([...CONSUMO_SET, ...PECUARIA_SET, ...currentUsers.map(u => u.ceco).filter(Boolean)])].sort((a,b) => a.localeCompare(b,'es'));
+  const inp = 'width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #bbb;border-radius:6px;';
+  out.innerHTML = '<datalist id="dl-editar-ceco">' + cecos.map(c => '<option value="' + escH(c) + '">').join('') + '</datalist>'
+    + '<div class="table-wrap"><table><thead><tr><th>Usuario</th><th>Nombre</th><th>Centro de Costo</th><th>Ámbito</th><th></th></tr></thead><tbody>'
+    + (visibles.length ? visibles.map((u,i) =>
+        '<tr data-u="' + escH(u.usuario) + '"><td>' + escH(u.usuario) + '</td>'
+      + '<td><input class="eu-nombre" style="' + inp + '" value="' + escH(u.nombre) + '"></td>'
+      + '<td><input class="eu-ceco" list="dl-editar-ceco" style="' + inp + '" value="' + escH(u.ceco) + '"></td>'
+      + '<td class="eu-ambito">' + (ambitoDeCeco(u.ceco) || '<span style="color:#B3261E;">sin ámbito</span>') + '</td>'
+      + '<td style="white-space:nowrap;"><button class="btn-secondary eu-save" style="width:auto;padding:6px 12px;">Guardar</button> '
+      + '<button class="btn-detalle eu-del" title="Eliminar usuario">Eliminar</button></td></tr>').join('')
+      : '<tr><td colspan="5" style="text-align:center;color:#777;">Sin resultados</td></tr>')
+    + '</tbody></table></div>';
+}
+(function initEditarUsuarios(){
+  const out = $('eu-results-area'); if (!out) return;
+  $('eu-filtro').addEventListener('input', renderEditarUsuarios);
+  $('eu-solo-sin-ambito').addEventListener('change', renderEditarUsuarios);
+  // Se dibuja al entrar a la pestaña (la base de CeCos ya está cargada desde Supabase para ese momento)
+  document.querySelector('#main-tabs button[data-view="sinceco"]').addEventListener('click', renderEditarUsuarios);
+
+  out.addEventListener('click', async (e) => {
+    const tr = e.target.closest('tr[data-u]'); if (!tr) return;
+    const usuario = tr.dataset.u;
+    if (e.target.classList.contains('eu-save')){
+      if (!supabaseClient){ alert('Configura la base de datos con el botón ⚙.'); return; }
+      const nombre = tr.querySelector('.eu-nombre').value.trim();
+      const ceco = tr.querySelector('.eu-ceco').value.trim();
+      if (!ceco){ alert('El Centro de Costo no puede quedar vacío.'); return; }
+      const b = e.target; b.disabled = true; b.textContent = '…';
+      try {
+        await guardarUnUsuarioEnSupabase(usuario, nombre, ceco);
+        const u = currentUsers.find(x => x.usuario === usuario);
+        if (u){ u.nombre = nombre; u.ceco = ceco; } else currentUsers.push({ usuario, nombre, ceco });
+        rebuildUserMaps(); updateBaseCountLabel(); populateHistUsuariosList(); populateCecosDatalist();
+        const amb = ambitoDeCeco(ceco);
+        tr.querySelector('.eu-ambito').innerHTML = amb || '<span style="color:#B3261E;">sin ámbito</span>';
+        b.textContent = '✓ Guardado'; b.disabled = false;
+        setTimeout(() => { b.textContent = 'Guardar'; }, 1800);
+      } catch(err){ b.disabled = false; b.textContent = 'Guardar'; alert('No se pudo guardar: ' + (err.message || err)); }
+    }
+    if (e.target.classList.contains('eu-del')){
+      if (!confirm('¿Eliminar al usuario "' + usuario + '" de la base de CeCos?\nSus impresiones históricas no se borran; solo aparecerá como "No está en la base".')) return;
+      if (!supabaseClient){ alert('Configura la base de datos con el botón ⚙.'); return; }
+      try {
+        await eliminarUnUsuarioEnSupabase(usuario);
+        currentUsers = currentUsers.filter(x => x.usuario !== usuario);
+        rebuildUserMaps(); updateBaseCountLabel(); populateHistUsuariosList(); populateCecosDatalist();
+        renderEditarUsuarios();
+      } catch(err){ alert('No se pudo eliminar: ' + (err.message || err)); }
+    }
+  });
+})();
 
 async function cargarCargasYEmpresas(){
   const outE = $('empresas-results-area'), outC = $('cargas-results-area');
