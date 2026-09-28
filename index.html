@@ -763,6 +763,8 @@ tfoot td:first-child{text-align:left;font-family:'Space Grotesk',sans-serif;}
           <label for="anom-dias-min">Mín. días con historial</label>
           <input type="number" id="anom-dias-min" value="5" step="1" min="2">
         </div>
+        <div class="field small"><label for="anom-desde">Desde</label><input type="date" id="anom-desde"></div>
+        <div class="field small"><label for="anom-hasta">Hasta</label><input type="date" id="anom-hasta"></div>
         <button class="btn-primary" style="margin-top:0;width:auto;padding:11px 20px;" id="btn-analizar-anomalias">Analizar anomalías</button>
       </div>
       <div class="batch-status" id="anom-status" style="margin-left:32px;"></div>
@@ -775,7 +777,7 @@ tfoot td:first-child{text-align:left;font-family:'Space Grotesk',sans-serif;}
           <circle cx="26" cy="18" r="9" fill="#EC008C" style="mix-blend-mode:multiply"/>
           <circle cx="23" cy="26" r="9" fill="#FFDE17" style="mix-blend-mode:multiply"/>
         </svg>
-        Presiona "Analizar anomalías" para revisar todo el historial guardado en la base de datos. Necesitas haber creado la función <code>printer_daily_totals</code> en Supabase (ver instrucciones) y tener al menos un par de Reportes cargados.
+        Presiona "Analizar anomalías" para revisar el rango de fechas elegido (si lo dejas vacío, se usa todo el historial guardado en la base de datos). Necesitas haber creado la función <code>printer_daily_totals</code> en Supabase (ver instrucciones) y tener al menos un par de Reportes cargados.
       </div>
     </div>
 
@@ -798,6 +800,8 @@ tfoot td:first-child{text-align:left;font-family:'Space Grotesk',sans-serif;}
           <label for="cusum-dias-min">Mín. días con historial</label>
           <input type="number" id="cusum-dias-min" value="10" step="1" min="4">
         </div>
+        <div class="field small"><label for="cusum-desde">Desde</label><input type="date" id="cusum-desde"></div>
+        <div class="field small"><label for="cusum-hasta">Hasta</label><input type="date" id="cusum-hasta"></div>
         <button class="btn-primary" style="margin-top:0;width:auto;padding:11px 20px;" id="btn-analizar-cusum">Detectar cambios sostenidos</button>
       </div>
       <div class="batch-status" id="cusum-status" style="margin-left:32px;"></div>
@@ -1381,6 +1385,12 @@ function detectarCambiosSostenidos(dailyRows, opts){
   return hallazgos;
 }
 
+// Filtra los totales diarios (usuario × día) al rango elegido; vacío = sin límite.
+function filtrarDailyPorRango(daily, desde, hasta){
+  if (!Array.isArray(daily) || (!desde && !hasta)) return daily;
+  return daily.filter(d => (!desde || d.fecha_dia >= desde) && (!hasta || d.fecha_dia <= hasta));
+}
+
 async function analizarAnomalias(){
   const statusEl = $('anom-status');
   const resultsArea = $('anomalias-results-area');
@@ -1396,9 +1406,11 @@ async function analizarAnomalias(){
   statusEl.textContent = 'Consultando historial y calculando líneas base…';
   statusEl.className = 'batch-status';
   try {
-    const daily = await fetchDailyTotals();
+    const dDesde = $('anom-desde').value || null, dHasta = $('anom-hasta').value || null;
+    if (dDesde && dHasta && dDesde > dHasta){ statusEl.textContent = 'La fecha "Desde" no puede ser posterior a "Hasta".'; statusEl.className = 'batch-status err'; return; }
+    const daily = filtrarDailyPorRango(await fetchDailyTotals(), dDesde, dHasta);
     if (!daily || daily.length === 0){
-      statusEl.textContent = 'No hay datos guardados todavía. Carga Reportes en "Informe de consumo" primero.';
+      statusEl.textContent = 'No hay datos guardados en ese rango de fechas. Carga Reportes en "Informe de consumo" o amplía el rango.';
       statusEl.className = 'batch-status err';
       return;
     }
@@ -1500,7 +1512,9 @@ async function analizarCusum(){
   statusEl.textContent = 'Consultando historial y calculando cambios sostenidos…';
   statusEl.className = 'batch-status loading';
   try {
-    const daily = await fetchDailyTotals();
+    const cDesde = $('cusum-desde').value || null, cHasta = $('cusum-hasta').value || null;
+    if (cDesde && cHasta && cDesde > cHasta){ statusEl.textContent = 'La fecha "Desde" no puede ser posterior a "Hasta".'; statusEl.className = 'batch-status err'; return; }
+    const daily = filtrarDailyPorRango(await fetchDailyTotals(), cDesde, cHasta);
     const hallazgos = detectarCambiosSostenidos(daily, { kFactor, hFactor, diasMin });
     renderCusum(hallazgos);
     statusEl.textContent = hallazgos.length + ' cambio(s) sostenido(s) detectado(s).';
@@ -2311,7 +2325,7 @@ function setupDateRangeUI(rows){
 function applyDefaultDateRangeGlobal(desde, hasta){
   const pares = [['hist-desde','hist-hasta'],['pers-desde','pers-hasta'],['fh-desde','fh-hasta'],
     ['rf-desde','rf-hasta'],['dc-desde','dc-hasta'],['dr-desde','dr-hasta'],['sr-desde','sr-hasta'],
-    ['emp-desde','emp-hasta'],['informe-fecha-desde','informe-fecha-hasta']];
+    ['emp-desde','emp-hasta'],['informe-fecha-desde','informe-fecha-hasta'],['anom-desde','anom-hasta'],['cusum-desde','cusum-hasta']];
   pares.forEach(([a,b]) => {
     const elD = $(a), elH = $(b);
     if (elD && desde) elD.value = desde;
@@ -2609,7 +2623,7 @@ document.querySelectorAll('#main-tabs button').forEach(btn => {
   });
 });
 
-const informeState = { periods: [] }; // {id,label,source,dateRange:{min,max}|null,byUser,byCeco,totalAll}
+const informeState = { periods: [], actual: null, anterior: null, rangoAnterior: null }; // {id,label,source,dateRange:{min,max}|null,byUser,byCeco,totalAll}
 let periodSeq = 0;
 
 function aggregateReportRows(rows){
@@ -2692,21 +2706,26 @@ async function fetchRangoDisponibleInforme(){
   return (data && data[0]) ? data[0] : null;
 }
 
-function construirPeriodosDesdeRPC(rowsUsuario, rowsDispositivo){
-  const porMes = {};
-  const getMes = (key) => {
-    if (!porMes[key]) porMes[key] = { byUser:{}, byCeco:{}, byDepto:{}, byDevice:{}, totalAll:0 };
-    return porMes[key];
-  };
+function parseISOLocal(iso){ const [y,m,d] = iso.split('-').map(Number); return new Date(y, m - 1, d); }
+function isoAddDays(iso, n){ const [y,m,d] = iso.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0,10); }
+function isoDiffDays(a, b){ const pa = a.split('-').map(Number), pb = b.split('-').map(Number); return Math.round((Date.UTC(pb[0],pb[1]-1,pb[2]) - Date.UTC(pa[0],pa[1]-1,pa[2])) / 86400000); }
+
+// Agrupa las filas de las RPC por la clave que devuelva keyFn (mes, o un único bloque = rango completo).
+// Acumula (+=) para que sumar varios meses del mismo usuario/equipo dé el total del rango.
+function agruparPorPeriodo(rowsUsuario, rowsDispositivo, keyFn){
+  const grupos = {};
+  const get = (key) => grupos[key] || (grupos[key] = { byUser:{}, byCeco:{}, byDepto:{}, byDevice:{}, totalAll:0 });
 
   rowsUsuario.forEach(r => {
-    const p = getMes(r.periodo);
+    const p = get(keyFn(r));
     const ceco = USER_TO_CECO[r.usuario] || '';
     const cecoKey = ceco || 'Sin Centro de Costo';
     const nombre = r.nombre || USER_TO_NOMBRE[r.usuario] || '';
     const total = Number(r.total)||0, bn = Number(r.bn)||0, color = Number(r.color)||0;
 
-    p.byUser[r.usuario] = { usuario: r.usuario, nombre, ceco: cecoKey, total, bn, color };
+    const u = p.byUser[r.usuario] || (p.byUser[r.usuario] = { usuario: r.usuario, nombre, ceco: cecoKey, total:0, bn:0, color:0 });
+    u.total += total; u.bn += bn; u.color += color;
+    if (nombre) u.nombre = nombre;
 
     if (!p.byCeco[cecoKey]) p.byCeco[cecoKey] = { ceco: cecoKey, total:0, bn:0, color:0 };
     p.byCeco[cecoKey].total += total; p.byCeco[cecoKey].bn += bn; p.byCeco[cecoKey].color += color;
@@ -2721,24 +2740,36 @@ function construirPeriodosDesdeRPC(rowsUsuario, rowsDispositivo){
   rowsDispositivo.forEach(r => {
     const deviceKey = r.serie || r.dispositivo;
     if (!deviceKey) return;
-    const p = getMes(r.periodo);
+    const p = get(keyFn(r));
     const total = Number(r.total)||0, bn = Number(r.bn)||0, color = Number(r.color)||0;
-    p.byDevice[deviceKey] = {
+    const d = p.byDevice[deviceKey] || (p.byDevice[deviceKey] = {
       device: deviceKey,
       label: (r.dispositivo || r.serie) + (r.serie && r.dispositivo ? ' \u00b7 ' + r.serie : ''),
-      total, bn, color
-    };
+      total:0, bn:0, color:0
+    });
+    d.total += total; d.bn += bn; d.color += color;
   });
+  return grupos;
+}
 
+// Periodos mensuales (para tendencia, proyección e interanual). Los meses de los extremos
+// se recortan al rango elegido para que la etiqueta refleje lo que realmente se analizó.
+function construirPeriodosDesdeRPC(rowsUsuario, rowsDispositivo, rango){
+  rango = rango || {};
+  const porMes = agruparPorPeriodo(rowsUsuario, rowsDispositivo, r => r.periodo);
   return Object.keys(porMes).sort().map(key => {
     const p = porMes[key];
     const [y, m] = key.split('-').map(Number);
-    const min = new Date(y, m - 1, 1);
-    const max = new Date(y, m, 0); // último día del mes
+    let min = new Date(y, m - 1, 1);
+    let max = new Date(y, m, 0); // último día del mes
+    let parcial = false;
+    if (rango.desde){ const d = parseISOLocal(rango.desde); if (d > min){ min = d; parcial = true; } }
+    if (rango.hasta){ const h = parseISOLocal(rango.hasta); if (h < max){ max = h; parcial = true; } }
     return {
       id: 'db-' + key,
       label: periodDefaultLabel({min, max}),
       source: 'db',
+      parcial,
       dateRange: { min, max },
       byUser: p.byUser, byCeco: p.byCeco, byDepto: p.byDepto, byDevice: p.byDevice,
       totalAll: p.totalAll
@@ -2746,36 +2777,77 @@ function construirPeriodosDesdeRPC(rowsUsuario, rowsDispositivo){
   });
 }
 
+// Un único periodo que suma TODO el rango [min, max] — es el que alimenta el informe ejecutivo.
+function construirPeriodoAgregado(rowsUsuario, rowsDispositivo, min, max, id){
+  const p = agruparPorPeriodo(rowsUsuario, rowsDispositivo, () => 'rango')['rango'];
+  if (!p || p.totalAll <= 0) return null;
+  return {
+    id, label: periodDefaultLabel({min, max}), source: 'db', dateRange: { min, max },
+    byUser: p.byUser, byCeco: p.byCeco, byDepto: p.byDepto, byDevice: p.byDevice, totalAll: p.totalAll
+  };
+}
+
+let informeReqSeq = 0; // descarta respuestas viejas si el usuario cambia las fechas mientras se consulta
+
 async function cargarInformeDesdeSupabase(){
   const statusEl = $('informe-db-status');
+  const btn = $('btn-actualizar-informe');
   if (!supabaseClient){
     if (statusEl){ statusEl.textContent = 'Configura la base de datos (botón ⚙ arriba a la derecha) para ver el histórico automáticamente.'; statusEl.className = 'batch-status err'; }
     return;
   }
   const desde = $('informe-fecha-desde').value || null;
   const hasta = $('informe-fecha-hasta').value || null;
+  if (desde && hasta && desde > hasta){
+    if (statusEl){ statusEl.textContent = 'La fecha "Desde" no puede ser posterior a "Hasta".'; statusEl.className = 'batch-status err'; }
+    return;
+  }
+  const seq = ++informeReqSeq;
   if (statusEl){ statusEl.textContent = 'Consultando la base de datos…'; statusEl.className = 'batch-status'; }
+  btn.disabled = true;
   try {
     const [rowsUsuario, rowsDispositivo] = await Promise.all([
       fetchInformePorUsuario(desde, hasta),
       fetchInformePorDispositivo(desde, hasta)
     ]);
-    informeState.periods = construirPeriodosDesdeRPC(rowsUsuario, rowsDispositivo);
-    updateInformeButtons();
+    if (seq !== informeReqSeq) return;
+    informeState.periods = construirPeriodosDesdeRPC(rowsUsuario, rowsDispositivo, { desde, hasta });
+    informeState.actual = null; informeState.anterior = null; informeState.rangoAnterior = null;
     if (informeState.periods.length === 0){
       if (statusEl){ statusEl.textContent = 'No hay registros guardados en ese rango de fechas.'; statusEl.className = 'batch-status err'; }
       $('informe-results-area').innerHTML = '<div class="empty-state">No hay registros guardados en la base de datos para el rango seleccionado. Carga un Reporte con "Cargar nuevos Reportes".</div>';
       return;
     }
+    // Periodo actual = TODO el rango elegido (no solo el último mes).
+    const first = informeState.periods[0], last = informeState.periods[informeState.periods.length - 1];
+    const dIni = desde ? parseISOLocal(desde) : first.dateRange.min;
+    const dFin = hasta ? parseISOLocal(hasta) : last.dateRange.max;
+    informeState.actual = construirPeriodoAgregado(rowsUsuario, rowsDispositivo, dIni, dFin, 'rango-actual');
+
+    // Periodo de comparación = rango inmediatamente anterior, con la misma cantidad de días.
+    const iniISO = toISODate(dIni), finISO = toISODate(dFin);
+    const dias = isoDiffDays(iniISO, finISO) + 1;
+    const pFin = isoAddDays(iniISO, -1), pIni = isoAddDays(iniISO, -dias);
+    informeState.rangoAnterior = { desde: pIni, hasta: pFin };
+    const [prevU, prevD] = await Promise.all([
+      fetchInformePorUsuario(pIni, pFin),
+      fetchInformePorDispositivo(pIni, pFin)
+    ]);
+    if (seq !== informeReqSeq) return;
+    informeState.anterior = construirPeriodoAgregado(prevU, prevD, parseISOLocal(pIni), parseISOLocal(pFin), 'rango-anterior');
+
     const meses = informeState.periods.map(p => periodShortLabel(p)).join(', ');
-    if (statusEl){ statusEl.textContent = informeState.periods.length + ' mes(es) cargados desde la base de datos: ' + meses + '.'; statusEl.className = 'batch-status ok'; }
+    if (statusEl){ statusEl.textContent = 'Analizando ' + informeState.actual.label + ' — ' + informeState.periods.length + ' mes(es) en el rango: ' + meses + '.'; statusEl.className = 'batch-status ok'; }
     renderInforme();
   } catch(err){
+    if (seq !== informeReqSeq) return;
     if (statusEl){
       statusEl.textContent = 'Error al consultar la base de datos: ' + (err.message || err) +
         (String(err.message||'').match(/informe_por|printer_records_date_range/) ? ' — ¿ya ejecutaste el SQL con las funciones informe_por_usuario / informe_por_dispositivo / printer_records_date_range en Supabase?' : '');
       statusEl.className = 'batch-status err';
     }
+  } finally {
+    if (seq === informeReqSeq) updateInformeButtons();
   }
 }
 
@@ -2792,8 +2864,13 @@ async function inicializarRangoInforme(){
   await cargarInformeDesdeSupabase();
 }
 
-$('informe-fecha-desde').addEventListener('change', cargarInformeDesdeSupabase);
-$('informe-fecha-hasta').addEventListener('change', cargarInformeDesdeSupabase);
+// Al cambiar cualquiera de las fechas se recalcula todo el informe (con una pequeña espera
+// para no consultar en cada tecla mientras se escribe la fecha).
+let informeFechaTimer = null;
+function reprogramarInforme(){ clearTimeout(informeFechaTimer); informeFechaTimer = setTimeout(cargarInformeDesdeSupabase, 350); }
+$('informe-fecha-desde').addEventListener('change', reprogramarInforme);
+$('informe-fecha-hasta').addEventListener('change', reprogramarInforme);
+$('input-umbral').addEventListener('change', () => { if (informeState.actual) renderInforme(); });
 
 $('file-periodo').addEventListener('change', async (e) => {
   const files = Array.from(e.target.files);
@@ -2979,7 +3056,7 @@ function buildExecReportHTML(latest, previous, cecoList, userList, changes){
   const fecha = new Date();
   const varTotal = previous && previous.totalAll > 0 ? ((latest.totalAll - previous.totalAll) / previous.totalAll) * 100 : null;
   let html = '<div class="exec-report"><div class="exec-head"><div><h2>Informe ejecutivo de impresi\u00f3n</h2>' +
-    '<div class="exec-meta">Periodo: ' + latest.label + ' \u00b7 generado el ' + fecha.toLocaleDateString('es-PE') + '</div></div>' +
+    '<div class="exec-meta">Periodo: ' + latest.label + (previous ? ' \u00b7 comparado con ' + previous.label : ' \u00b7 sin periodo anterior equivalente para comparar') + ' \u00b7 generado el ' + fecha.toLocaleDateString('es-PE') + '</div></div>' +
     '<button class="btn-print" id="btn-print-exec">Imprimir / Guardar PDF</button></div>';
 
   html += '<div class="exec-grid">';
@@ -3003,10 +3080,10 @@ function buildExecReportHTML(latest, previous, cecoList, userList, changes){
 }
 
 function renderInforme(){
-  const periods = sortedPeriods();
-  if (periods.length === 0) return;
-  const latest = periods[periods.length - 1];
-  const previous = periods.length >= 2 ? periods[periods.length - 2] : null;
+  const periods = sortedPeriods(); // meses dentro del rango (para tendencia / proyección / interanual)
+  if (!informeState.actual || periods.length === 0) return;
+  const latest = informeState.actual;     // todo el rango elegido
+  const previous = informeState.anterior; // rango anterior de igual duración (o null si no hay datos)
   const thresholdPct = parseFloat($('input-umbral').value) || 20;
   const rateBN = parseFloat($('rate-bn').value) || 0.012;
   const rateColor = parseFloat($('rate-color').value) || 0.0525;
@@ -3071,7 +3148,7 @@ function renderInforme(){
     // ---- Tendencia ----
     const labels = periods.map(periodShortLabel);
     const totals = periods.map(p => p.totalAll);
-    html += '<div class="dash-section"><h2>Tendencia de consumo</h2><p class="dash-sub">Volumen total por periodo (' + periods.length + ' periodos cargados)</p>';
+    html += '<div class="dash-section"><h2>Tendencia de consumo</h2><p class="dash-sub">Volumen total por mes dentro del rango (' + periods.length + ' meses)' + (periods.some(p => p.parcial) ? ' \u00b7 los meses de los extremos pueden estar incompletos' : '') + '</p>';
     html += svgTrend(labels, totals);
     html += '</div>';
 
@@ -3127,8 +3204,17 @@ function renderInforme(){
     }
     html += '</div>';
 
-    // ---- Cambios significativos ----
-    html += '<div class="dash-section"><h2>Cambios significativos</h2><p class="dash-sub">' + previous.label + ' \u2192 ' + latest.label + ' \u00b7 umbral ' + thresholdPct + '%</p>';
+  } else {
+    html += '<div class="alert info"><strong>Tendencias y proyección</strong>El rango elegido abarca un solo mes. Amplía el rango a dos meses o más para ver la evolución mensual y la proyección.</div>';
+  }
+
+  // ---- Cambios significativos (rango actual vs. rango anterior de igual duración) ----
+  html += '<div class="dash-section"><h2>Cambios significativos</h2>';
+  if (!previous){
+    const ra = informeState.rangoAnterior;
+    html += '<p class="dash-sub">No hay registros en el periodo anterior equivalente' + (ra ? ' (' + ra.desde + ' \u2192 ' + ra.hasta + ')' : '') + ', por lo que no se puede comparar. Elige un rango que tenga datos guardados justo antes.</p>';
+  } else {
+    html += '<p class="dash-sub">' + previous.label + ' \u2192 ' + latest.label + ' \u00b7 umbral ' + thresholdPct + '%</p>';
     if (changes.length === 0){
       html += '<p style="font-size:12.5px;color:var(--ink-soft);">No se detectaron variaciones por encima del umbral configurado.</p>';
     } else {
@@ -3136,11 +3222,10 @@ function renderInforme(){
       changes.forEach(r => {
         html += '<tr><td>' + r.tipo + '</td><td class="name">' + escH(r.nombre) + '</td><td class="num">' + fmtInt(r.p) + '</td><td class="num">' + fmtInt(r.c) + '</td><td class="num">' + (r.tagText==='Nuevo'||r.tagText==='Dej\u00f3 de imprimir' ? '\u2014' : (r.pct>=0?'+':'') + (r.pct*100).toFixed(0) + '%') + '</td><td><span class="tag-change ' + r.tagClass + '">' + r.tagText + '</span></td></tr>';
       });
-      html += '</tbody></table></div>';
+      html += '</tbody></table>';
     }
-  } else {
-    html += '<div class="alert info"><strong>Tendencias y cambios de volumen</strong>Carga al menos un periodo adicional (otro Reporte o un snapshot .json anterior) para ver la evoluci\u00f3n y detectar variaciones.</div>';
   }
+  html += '</div>';
 
   $('informe-results-area').innerHTML = html;
 
@@ -3185,7 +3270,7 @@ $('btn-actualizar-informe').addEventListener('click', cargarInformeDesdeSupabase
 $('btn-descargar-snapshot').addEventListener('click', () => {
   const periods = sortedPeriods();
   if (periods.length === 0) return;
-  const latest = periods[periods.length - 1];
+  const latest = informeState.actual || periods[periods.length - 1];
   const snap = {
     type: 'prorrateo_snapshot_v1',
     label: latest.label,
@@ -3268,6 +3353,42 @@ async function cargarCargasYEmpresas(){
   }
 }
 $('btn-cargas').addEventListener('click', cargarCargasYEmpresas);
+
+// =====================================================================
+// Re-ejecución automática: si un análisis ya se corrió y luego cambian sus fechas, se vuelve
+// a ejecutar solo (igual que el Informe de consumo). También sigue funcionando el botón.
+// =====================================================================
+(function(){
+  const cfgs = [
+    { ids:['hist-desde','hist-hasta'],   btn:'btn-hist-buscar',          run:() => buscarHistorial() },
+    { ids:['anom-desde','anom-hasta'],   btn:'btn-analizar-anomalias',   run:() => analizarAnomalias() },
+    { ids:['cusum-desde','cusum-hasta'], btn:'btn-analizar-cusum',       run:() => analizarCusum() },
+    { ids:['pers-desde','pers-hasta'],   btn:'btn-analizar-personales',  run:() => analizarImpresionesPersonales() },
+    { ids:['fh-desde','fh-hasta'],       btn:'btn-analizar-fh',          run:() => analizarFueraHorario() },
+    { ids:['rf-desde','rf-hasta'],       btn:'btn-analizar-rafagas',     run:() => analizarRafagas() },
+    { ids:['dc-desde','dc-hasta'],       btn:'btn-analizar-compartidos', run:() => analizarDocumentosCompartidos() },
+    { ids:['dr-desde','dr-hasta'],       btn:'btn-analizar-repetidos',   run:() => analizarDocumentosRepetidos() },
+    { ids:['af-corte'],                  btn:'btn-analizar-afinidad',    run:() => analizarAfinidad() },
+    { ids:['sr-desde','sr-hasta'],       btn:'btn-analizar-score',       run:() => analizarScoreRiesgo() },
+    { ids:['emp-desde','emp-hasta'],     btn:'btn-cargas',               run:() => cargarCargasYEmpresas() }
+  ];
+  cfgs.forEach(cfg => {
+    let yaEjecutado = false, timer = null;
+    const btn = $(cfg.btn);
+    if (btn) btn.addEventListener('click', () => { yaEjecutado = true; });
+    cfg.ids.forEach(id => {
+      const el = $(id);
+      if (!el) return;
+      el.addEventListener('change', () => {
+        if (!yaEjecutado || !supabaseClient) return;
+        const d = cfg.ids.length === 2 ? $(cfg.ids[0]).value : '', h = cfg.ids.length === 2 ? $(cfg.ids[1]).value : '';
+        if (d && h && d > h) return; // rango invertido: no consultar
+        clearTimeout(timer);
+        timer = setTimeout(cfg.run, 350);
+      });
+    });
+  });
+})();
 
 </script>
 </body>
