@@ -422,6 +422,15 @@ tfoot td:first-child{text-align:left;font-family:'Space Grotesk',sans-serif;}
     </div>
   </div>
 
+  <div class="ambito-bar" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:8px 0;">
+    <span style="font-size:12px;color:var(--ink-soft);">Ámbito del análisis (Histórico, Anomalías, Personales, Patrones, Informe):</span>
+    <div class="segmented" id="ambito-global">
+      <button data-ambito="todos" class="active">Todo el registro</button>
+      <button data-ambito="consumo">Solo Consumo</button>
+      <button data-ambito="pecuaria">Solo Pecuaria</button>
+    </div>
+  </div>
+
   <div class="tabs" id="main-tabs">
     <button data-view="prorrateo" class="active">Prorrateo de factura</button>
     <button data-view="informe">Informe de consumo</button>
@@ -978,6 +987,32 @@ function setDbStatus(mode, text){
   $('db-status-text').textContent = text;
 }
 
+let AMBITO_ANALISIS = 'todos';
+const RPC_FILTRABLES = new Set(['printer_daily_totals','impresiones_personales','impresiones_fuera_horario',
+  'rafagas_impresion','documentos_repetidos','informe_usuario_dispositivo','informe_por_usuario']);
+function filtrarPorAmbito(rows){
+  if (AMBITO_ANALISIS === 'todos' || !Array.isArray(rows)) return rows;
+  const set = AMBITO_ANALISIS === 'consumo' ? CONSUMO_SET : PECUARIA_SET;
+  return rows.filter(r => r && set.has(String(USER_TO_CECO[r.usuario] || r.ceco || '').trim()));
+}
+function envolverRpcConAmbito(client){
+  const orig = client.rpc.bind(client);
+  client.rpc = (fn, args, opts) => {
+    const b = orig(fn, args, opts);
+    if (!RPC_FILTRABLES.has(fn)) return b;
+    return b.then(r => { if (r && Array.isArray(r.data)) r.data = filtrarPorAmbito(r.data); return r; });
+  };
+  return client;
+}
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('#ambito-global button');
+  if (!btn) return;
+  document.querySelectorAll('#ambito-global button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  AMBITO_ANALISIS = btn.dataset.ambito;
+  if (supabaseClient && typeof cargarInformeDesdeSupabase === 'function') cargarInformeDesdeSupabase();
+});
+
 function initSupabase(){
   const cfg = getSupabaseConfig();
   if (!cfg){
@@ -986,7 +1021,7 @@ function initSupabase(){
     return null;
   }
   try {
-    supabaseClient = window.supabase.createClient(cfg.url, cfg.key);
+    supabaseClient = envolverRpcConAmbito(window.supabase.createClient(cfg.url, cfg.key));
     setDbStatus('ok', 'Base de datos conectada');
     return supabaseClient;
   } catch(err){
@@ -1169,7 +1204,7 @@ async function buscarHistorial(){
       if (hasta) query = query.lte('fecha', hasta + 'T23:59:59' + TZ_OFFSET_LIMA);
       const { data, error } = await query;
       if (error) throw error;
-      registros.push(...data);
+      registros.push(...filtrarPorAmbito(data));
       if (data.length < PAGE || registros.length >= MAX_ROWS) break;
       from += PAGE;
     }
