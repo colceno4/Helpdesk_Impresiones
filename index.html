@@ -141,6 +141,9 @@ body{
 .dropzone input{display:none;}
 .dropzone .fname{font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;color:var(--brand);word-break:break-all;display:block;}
 .dropzone .fdetail{display:block;font-size:11px;color:var(--ink-soft);margin-top:2px;}
+.upload-status.status-loading,.upload-status.status-loading .fname,.upload-status.status-loading .fdetail{color:#c1720a;}
+.upload-status.status-ok,.upload-status.status-ok .fname,.upload-status.status-ok .fdetail{color:#1a7f37;}
+.upload-status.status-err,.upload-status.status-err .fname,.upload-status.status-err .fdetail{color:var(--danger);}
 
 .field{margin-left:32px;margin-top:8px;}
 .field label{display:block;font-size:11.5px;color:var(--ink-soft);margin-bottom:4px;}
@@ -500,7 +503,7 @@ tfoot td:first-child{text-align:left;font-family:'Space Grotesk',sans-serif;}
         <div class="step-sub">Archivo .xls / .xlsx exportado del sistema de impresión</div>
         <label class="dropzone" id="drop-reporte">
           <input type="file" id="file-reporte" accept=".xls,.xlsx">
-          <span id="drop-reporte-text">Arrastra o haz clic para cargar el Reporte</span>
+          <span id="drop-reporte-text" class="upload-status">Arrastra o haz clic para cargar el Reporte</span>
         </label>
 
         <div class="daterange" id="daterange-block">
@@ -517,6 +520,7 @@ tfoot td:first-child{text-align:left;font-family:'Space Grotesk',sans-serif;}
           </div>
           <div class="hint" id="hint-daterange">Se detectó la columna Fecha — por defecto se toma todo el rango del archivo.</div>
         </div>
+        <div class="batch-status" id="reporte-db-status"></div>
       </div>
 
       <div class="step">
@@ -527,7 +531,7 @@ tfoot td:first-child{text-align:left;font-family:'Space Grotesk',sans-serif;}
         <div class="step-sub">Se extrae automáticamente la base imponible (USD)</div>
         <label class="dropzone" id="drop-factura">
           <input type="file" id="file-factura" accept=".pdf">
-          <span id="drop-factura-text">Arrastra o haz clic para cargar la factura</span>
+          <span id="drop-factura-text" class="upload-status">Arrastra o haz clic para cargar la factura</span>
         </label>
         <div class="field">
           <label for="input-base-usd">Base a prorratear — USD</label>
@@ -1035,8 +1039,8 @@ $('btn-save-settings').addEventListener('click', async () => {
 
 // Inserta en Supabase un lote (batch) de filas ya parseadas de un Reporte.
 // rows: salida de parseReporteWorkbook (con fecha, usuario, nombre, etc.)
-async function subirLoteASupabase(fileName, rows, dateRange, label){
-  const statusEl = $('periodo-db-status');
+async function subirLoteASupabase(fileName, rows, dateRange, label, statusId){
+  const statusEl = $(statusId || 'periodo-db-status');
   if (!supabaseClient){
     if (statusEl){ statusEl.textContent = 'No se guardó en la base de datos: configúrala con el botón ⚙ de arriba.'; statusEl.className = 'batch-status err'; }
     return;
@@ -2264,11 +2268,31 @@ function setupDateRangeUI(rows){
   $('hint-daterange').textContent = 'Datos disponibles del ' + toISODate(min) + ' al ' + toISODate(max) + '. Ajusta si deseas un rango menor.';
   $('hint-daterange').classList.remove('warn');
   $('daterange-block').classList.add('active');
+  applyDefaultDateRangeGlobal(toISODate(min), toISODate(max));
 }
+
+// Aplica el rango del Reporte de impresiones (paso 1) como valor por defecto
+// en los demás rangos de fecha de la aplicación.
+function applyDefaultDateRangeGlobal(desde, hasta){
+  const pares = [['hist-desde','hist-hasta'],['pers-desde','pers-hasta'],['fh-desde','fh-hasta'],
+    ['rf-desde','rf-hasta'],['dc-desde','dc-hasta'],['dr-desde','dr-hasta'],['sr-desde','sr-hasta'],
+    ['emp-desde','emp-hasta'],['informe-fecha-desde','informe-fecha-hasta']];
+  pares.forEach(([a,b]) => {
+    const elD = $(a), elH = $(b);
+    if (elD && desde) elD.value = desde;
+    if (elH && hasta) elH.value = hasta;
+  });
+  const corte = $('af-corte');
+  if (corte && hasta) corte.value = hasta;
+}
+
+$('input-fecha-desde').addEventListener('change', () => applyDefaultDateRangeGlobal($('input-fecha-desde').value, $('input-fecha-hasta').value));
+$('input-fecha-hasta').addEventListener('change', () => applyDefaultDateRangeGlobal($('input-fecha-desde').value, $('input-fecha-hasta').value));
 
 $('file-reporte').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
+  $('drop-reporte-text').className = 'upload-status status-loading';
   $('drop-reporte-text').textContent = 'Leyendo ' + file.name + '…';
   try {
     const buf = await file.arrayBuffer();
@@ -2276,6 +2300,7 @@ $('file-reporte').addEventListener('change', async (e) => {
     const { rows, hasFecha } = parseReporteWorkbook(wb);
     state.reporteRows = rows;
     $('drop-reporte').classList.add('has-file');
+    $('drop-reporte-text').className = 'upload-status status-ok';
     $('drop-reporte-text').innerHTML = '<span class="fname">' + file.name + '</span><span class="fdetail">' + rows.length.toLocaleString('en-US') + ' registros leídos</span>';
     setupDateRangeUI(rows);
     if (!hasFecha){
@@ -2283,9 +2308,21 @@ $('file-reporte').addEventListener('change', async (e) => {
       $('hint-daterange').classList.add('warn');
     }
     markStepDone(1);
+    // Guarda el detalle completo del archivo en la base de datos (histórico),
+    // igual que al cargar desde "Informe de consumo".
+    try {
+      const agg = aggregateReportRows(rows);
+      await subirLoteASupabase(file.name, rows, agg.dateRange, periodDefaultLabel(agg.dateRange, file.name), 'reporte-db-status');
+      if (typeof cargarInformeDesdeSupabase === 'function') await cargarInformeDesdeSupabase();
+    } catch (dbErr){
+      const st = $('reporte-db-status');
+      st.textContent = 'Error al guardar en la base de datos: ' + (dbErr.message || dbErr);
+      st.className = 'batch-status err';
+    }
   } catch (err){
     state.reporteRows = null;
     $('drop-reporte').classList.remove('has-file');
+    $('drop-reporte-text').className = 'upload-status status-err';
     $('drop-reporte-text').textContent = 'Error: ' + err.message;
     $('daterange-block').classList.remove('active');
   }
@@ -2347,6 +2384,7 @@ function validarFactura(text, base){
 $('file-factura').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
+  $('drop-factura-text').className = 'upload-status status-loading';
   $('drop-factura-text').textContent = 'Leyendo ' + file.name + '…';
   $('validacion-factura').style.display = 'none';
   try {
@@ -2354,6 +2392,7 @@ $('file-factura').addEventListener('change', async (e) => {
     state.facturaText = text;
     const base = extractBaseImponible(text);
     $('drop-factura').classList.add('has-file');
+    $('drop-factura-text').className = 'upload-status status-ok';
     $('drop-factura-text').innerHTML = '<span class="fname">' + file.name + '</span>';
     if (base !== null){
       $('input-base-usd').value = base.toFixed(2);
@@ -2367,6 +2406,7 @@ $('file-factura').addEventListener('change', async (e) => {
     }
   } catch (err){
     $('drop-factura').classList.remove('has-file');
+    $('drop-factura-text').className = 'upload-status status-err';
     $('drop-factura-text').textContent = 'Error: ' + err.message;
   }
   updateCalcButton();
