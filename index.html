@@ -3098,6 +3098,30 @@ function pushChangeRow(rows, tipo, nombre, p, c, thresholdPct){
   rows.push({ tipo, nombre, p, c, pct, tagClass, tagText });
 }
 
+// Compara cada usuario mes calendario contra el mes calendario inmediato anterior dentro del
+// propio rango elegido (a diferencia de computeChanges, que compara el bloque completo del rango
+// contra el bloque anterior). Así un salto de un solo mes no queda diluido si el rango abarca varios.
+function computeMonthToMonthChanges(periods, thresholdPct){
+  const rows = [];
+  for (let i = 1; i < periods.length; i++){
+    const prev = periods[i-1], curr = periods[i];
+    const userKeys = new Set([...Object.keys(prev.byUser), ...Object.keys(curr.byUser)]);
+    userKeys.forEach(k => {
+      const p = prev.byUser[k] ? prev.byUser[k].total : 0;
+      const c = curr.byUser[k] ? curr.byUser[k].total : 0;
+      const nombre = (curr.byUser[k] && curr.byUser[k].nombre) || (prev.byUser[k] && prev.byUser[k].nombre) || k;
+      const before = rows.length;
+      pushChangeRow(rows, 'Usuario', nombre + ' (' + k + ')', p, c, thresholdPct);
+      if (rows.length > before){
+        rows[rows.length-1].mesAnterior = periodShortLabel(prev);
+        rows[rows.length-1].mesActual = periodShortLabel(curr);
+      }
+    });
+  }
+  rows.sort((a,b) => Math.abs(b.pct) - Math.abs(a.pct));
+  return rows;
+}
+
 function computeChanges(prev, curr, thresholdPct){
   const rows = [];
   const cecoKeys = new Set([...Object.keys(prev.byCeco), ...Object.keys(curr.byCeco)]);
@@ -3288,6 +3312,19 @@ function renderInforme(){
     const totals = periods.map(p => p.totalAll);
     html += '<div class="dash-section"><h2>Tendencia de consumo</h2><p class="dash-sub">Volumen total por mes dentro del rango (' + periods.length + ' meses)' + (periods.some(p => p.parcial) ? ' \u00b7 los meses de los extremos pueden estar incompletos' : '') + '</p>';
     html += svgTrend(labels, totals);
+    html += '</div>';
+
+    // ---- Cambios mes a mes por usuario (dentro del propio rango, mes calendario contra mes calendario) ----
+    const mesAMesChanges = computeMonthToMonthChanges(periods, thresholdPct);
+    html += '<div class="dash-section"><h2>Cambios mes a mes por usuario</h2><p class="dash-sub">Compara cada mes del rango contra el mes calendario inmediato anterior (no el bloque completo) \u00b7 umbral ' + thresholdPct + '%</p>';
+    if (mesAMesChanges.length === 0){
+      html += '<p style="font-size:12.5px;color:var(--ink-soft);">No se detectaron variaciones de un usuario de un mes a otro por encima del umbral configurado.</p>';
+    } else {
+      html += '<table class="changes-table"><thead><tr><th>Usuario</th><th>De</th><th>A</th><th class="num">Mes anterior</th><th class="num">Mes actual</th><th class="num">Variaci\u00f3n</th><th>Estado</th></tr></thead><tbody>' +
+        mesAMesChanges.slice(0,30).map(r => '<tr><td class="name">' + escH(r.nombre) + '</td><td>' + escH(r.mesAnterior) + '</td><td>' + escH(r.mesActual) + '</td><td class="num">' + fmtInt(r.p) + '</td><td class="num">' + fmtInt(r.c) + '</td><td class="num">' + (r.tagText==='Nuevo'||r.tagText==='Dej\u00f3 de imprimir' ? '\u2014' : (r.pct>=0?'+':'') + (r.pct*100).toFixed(0) + '%') + '</td><td><span class="tag-change ' + r.tagClass + '">' + r.tagText + '</span></td></tr>').join('') +
+        '</tbody></table>';
+      if (mesAMesChanges.length > 30) html += '<p style="font-size:11.5px;color:var(--ink-soft);margin-top:6px;">Mostrando los 30 cambios m\u00e1s grandes de un total de ' + mesAMesChanges.length + '.</p>';
+    }
     html += '</div>';
 
     const allUsersMap = {};
