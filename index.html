@@ -542,6 +542,9 @@ tfoot td:first-child{text-align:left;font-family:'Space Grotesk',sans-serif;}
           <div class="hint" id="hint-daterange">Se detectó la columna Fecha — por defecto se toma todo el rango del archivo.</div>
         </div>
         <div class="batch-status" id="reporte-db-status"></div>
+        <div class="hint" style="margin-top:8px;">
+          ¿El Reporte ya está guardado? <a href="#" id="btn-usar-bd" style="color:var(--brand);text-decoration:underline;text-underline-offset:2px;">Usar los datos de la base de datos</a> y solo elegir el rango de fechas.
+        </div>
       </div>
 
       <div class="step">
@@ -1957,6 +1960,7 @@ cargarBaseCecos().then(() => inicializarRangoInforme());
 
 // ---------- State ----------
 const state = {
+  usarBD: false,          // true = el Reporte se toma de Supabase (solo se elige el rango de fechas)
   reporteRows: null,      // [{usuario, tipo, total, fecha}]
   hasFecha: false,
   facturaText: null,
@@ -1980,7 +1984,10 @@ function toISODate(d){
 function markStepDone(n){ $('num-' + n).classList.add('done'); }
 
 function updateCalcButton(){
-  const ready = !!state.reporteRows && parseFloat($('input-base-usd').value) > 0 && parseFloat($('input-tc').value) > 0;
+  const hayReporte = state.usarBD
+    ? !!($('input-fecha-desde').value && $('input-fecha-hasta').value && $('input-fecha-desde').value <= $('input-fecha-hasta').value)
+    : !!state.reporteRows;
+  const ready = hayReporte && parseFloat($('input-base-usd').value) > 0 && parseFloat($('input-tc').value) > 0;
   $('btn-calcular').disabled = !ready;
 }
 
@@ -2347,8 +2354,51 @@ function applyDefaultDateRangeGlobal(desde, hasta){
   if (corte && hasta) corte.value = hasta;
 }
 
-$('input-fecha-desde').addEventListener('change', () => applyDefaultDateRangeGlobal($('input-fecha-desde').value, $('input-fecha-hasta').value));
-$('input-fecha-hasta').addEventListener('change', () => applyDefaultDateRangeGlobal($('input-fecha-desde').value, $('input-fecha-hasta').value));
+$('input-fecha-desde').addEventListener('change', () => { applyDefaultDateRangeGlobal($('input-fecha-desde').value, $('input-fecha-hasta').value); updateCalcButton(); });
+$('input-fecha-hasta').addEventListener('change', () => { applyDefaultDateRangeGlobal($('input-fecha-desde').value, $('input-fecha-hasta').value); updateCalcButton(); });
+
+// ---- Paso 1 alternativo: usar los datos ya guardados en Supabase ----
+$('btn-usar-bd').addEventListener('click', async (e) => {
+  e.preventDefault();
+  const st = $('reporte-db-status');
+  if (!supabaseClient){
+    st.textContent = 'La base de datos no est\u00e1 conectada. Config\u00farala con el bot\u00f3n \u2699 de arriba.';
+    st.className = 'batch-status err';
+    return;
+  }
+  st.textContent = 'Consultando el rango disponible\u2026';
+  st.className = 'batch-status';
+  try {
+    const rango = await fetchRangoDisponibleInforme();
+    if (!rango || !rango.min_fecha){
+      st.textContent = 'La base de datos no tiene registros con fecha todav\u00eda. Carga un Reporte primero.';
+      st.className = 'batch-status err';
+      return;
+    }
+    state.usarBD = true;
+    state.reporteRows = null;
+    state.hasFecha = true;
+    ['input-fecha-desde','input-fecha-hasta'].forEach(id => { $(id).min = rango.min_fecha; $(id).max = rango.max_fecha; });
+    // Si ya hay un rango elegido dentro de lo disponible se respeta; si no, se usa todo lo disponible
+    const d = $('input-fecha-desde'), h = $('input-fecha-hasta');
+    if (!d.value || d.value < rango.min_fecha || d.value > rango.max_fecha) d.value = rango.min_fecha;
+    if (!h.value || h.value < rango.min_fecha || h.value > rango.max_fecha) h.value = rango.max_fecha;
+    $('daterange-block').classList.add('active');
+    $('hint-daterange').textContent = 'Datos en la base de datos del ' + rango.min_fecha + ' al ' + rango.max_fecha + '. Elige el rango a prorratear.';
+    $('hint-daterange').classList.remove('warn');
+    $('drop-reporte').classList.add('has-file');
+    $('drop-reporte-text').className = 'upload-status status-ok';
+    $('drop-reporte-text').innerHTML = '<span class="fname">Base de datos</span><span class="fdetail">Se usar\u00e1n los registros guardados en el rango elegido</span>';
+    st.textContent = '';
+    st.className = 'batch-status';
+    markStepDone(1);
+    applyDefaultDateRangeGlobal(d.value, h.value);
+  } catch (err){
+    st.textContent = 'Error al consultar la base de datos: ' + (err.message || err);
+    st.className = 'batch-status err';
+  }
+  updateCalcButton();
+});
 
 $('file-reporte').addEventListener('change', async (e) => {
   const file = e.target.files[0];
@@ -2359,6 +2409,7 @@ $('file-reporte').addEventListener('change', async (e) => {
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, {type:'array', cellDates:false});
     const { rows, hasFecha } = parseReporteWorkbook(wb);
+    state.usarBD = false;
     state.reporteRows = rows;
     $('drop-reporte').classList.add('has-file');
     $('drop-reporte-text').className = 'upload-status status-ok';
@@ -2494,7 +2545,7 @@ function calcular(){
   const scope = state.scope;
 
   let desde = null, hasta = null;
-  if (state.hasFecha && $('input-fecha-desde').value && $('input-fecha-hasta').value){
+  if ((state.hasFecha || state.usarBD) && $('input-fecha-desde').value && $('input-fecha-hasta').value){
     desde = new Date($('input-fecha-desde').value + 'T00:00:00');
     hasta = new Date($('input-fecha-hasta').value + 'T23:59:59');
   }
@@ -2616,7 +2667,50 @@ function exportXlsx(result){
   XLSX.writeFile(wb, 'Prorrateo_Impresion_' + state.scope + '.xlsx');
 }
 
-$('btn-calcular').addEventListener('click', () => {
+// Trae de Supabase el consumo por usuario del rango elegido y lo convierte al formato del Reporte
+async function cargarReporteDesdeBD(){
+  const desde = $('input-fecha-desde').value, hasta = $('input-fecha-hasta').value;
+  // El filtro de \u00e1mbito global del an\u00e1lisis no debe afectar al prorrateo (ya tiene su propio \u00e1mbito en el paso 4)
+  const ambitoPrevio = AMBITO_ANALISIS;
+  AMBITO_ANALISIS = 'todos';
+  let data;
+  try { data = await fetchInformePorUsuario(desde, hasta); }
+  finally { AMBITO_ANALISIS = ambitoPrevio; }
+  // Las filas ya vienen filtradas por el rango exacto en el servidor; se les pone una fecha dentro del rango
+  const fecha = new Date(desde + 'T12:00:00');
+  const rows = [];
+  data.forEach(r => {
+    const bn = Number(r.bn) || 0, color = Number(r.color) || 0;
+    if (bn > 0) rows.push({ usuario: r.usuario, tipo: 'BN', total: bn, fecha, nombre: r.nombre || '', departamento: r.departamento || '' });
+    if (color > 0) rows.push({ usuario: r.usuario, tipo: 'COLOR', total: color, fecha, nombre: r.nombre || '', departamento: r.departamento || '' });
+  });
+  return rows;
+}
+
+$('btn-calcular').addEventListener('click', async () => {
+  if (state.usarBD){
+    const st = $('reporte-db-status');
+    const btn = $('btn-calcular');
+    btn.disabled = true;
+    st.textContent = 'Leyendo los registros de la base de datos\u2026';
+    st.className = 'batch-status';
+    try {
+      state.reporteRows = await cargarReporteDesdeBD();
+    } catch (err){
+      st.textContent = 'Error al leer la base de datos: ' + (err.message || err);
+      st.className = 'batch-status err';
+      updateCalcButton();
+      return;
+    }
+    updateCalcButton();
+    if (state.reporteRows.length === 0){
+      st.textContent = 'No hay registros guardados en ese rango de fechas.';
+      st.className = 'batch-status err';
+      return;
+    }
+    st.textContent = fmtInt(state.reporteRows.length) + ' l\u00edneas de consumo le\u00eddas de la base de datos.';
+    st.className = 'batch-status ok';
+  }
   if (!state.reporteRows || state.reporteRows.length === 0) return;
   const result = calcular();
   render(result);
