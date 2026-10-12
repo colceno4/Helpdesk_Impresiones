@@ -1119,12 +1119,36 @@ async function subirLoteASupabase(fileName, rows, dateRange, label, statusId){
     const fDesde = toISODate(dateRange.min);
     const fHasta = toISODate(dateRange.max);
 
-    // Detecta lotes ya guardados cuyo rango de fechas se solapa con el de este archivo
-    // (más confiable que comparar por nombre de archivo, que puede repetirse o cambiar).
+    // Ventana [inicio, fin) en hora Lima que cubre exactamente los días que trae este archivo.
+    // (Perú no tiene horario de verano, así que sumar 24 h equivale a "día siguiente".)
+    const inicioISO = new Date(fDesde + 'T00:00:00' + TZ_OFFSET_LIMA).toISOString();
+    const finISO = new Date(new Date(fHasta + 'T00:00:00' + TZ_OFFSET_LIMA).getTime() + 86400000).toISOString();
+
+    // Lotes que se solapan en fechas: YA NO se borran enteros. Solo se usan al final para
+    // limpiar los que se queden sin registros o actualizar su contador.
     const { data: existentes, error: errBusqueda } = await supabaseClient
       .from('printer_batches').select('id, nombre_archivo, fecha_desde, fecha_hasta')
       .lte('fecha_desde', fHasta).gte('fecha_hasta', fDesde);
     if (errBusqueda) throw errBusqueda;
+
+    // Cuántos registros ya guardados caen dentro de los días de este archivo (esos son los únicos
+    // que se reemplazarán; el resto de los lotes vecinos queda intacto).
+    const { count: previos, error: errCount } = await supabaseClient
+      .from('printer_records').select('id', { count: 'exact', head: true })
+      .gte('fecha', inicioISO).lt('fecha', finISO);
+    if (errCount) throw errCount;
+
+    if (previos > 0){
+      const ok = window.confirm(
+        '"' + fileName + '" cubre del ' + fDesde + ' al ' + fHasta + ' (' + rows.length.toLocaleString('en-US') + ' registros).\n\n' +
+        'Ya hay ' + previos.toLocaleString('en-US') + ' registros guardados en esas fechas. ' +
+        'Se reemplazarán SOLO esos registros por los del archivo; el resto del historial no se toca.\n\n' +
+        '¿Continuar?');
+      if (!ok){
+        if (statusEl){ statusEl.textContent = 'Carga de "' + fileName + '" cancelada: no se modificó la base de datos.'; statusEl.className = 'batch-status err'; }
+        return;
+      }
+    }
 
     const { data: batch, error: errBatch } = await supabaseClient.from('printer_batches').insert({
       nombre_archivo: fileName,
@@ -1157,19 +1181,34 @@ async function subirLoteASupabase(fileName, rows, dateRange, label, statusId){
       if (statusEl){ statusEl.textContent = 'Guardando "' + fileName + '"… ' + Math.min(i + CHUNK, registros.length) + '/' + registros.length; }
     }
 
-    // Solo una vez confirmado que el lote nuevo quedó completo, se eliminan los lotes
-    // anteriores que se solapaban en fechas (evita quedarnos sin ningún dato si algo falla a medio camino).
+    // Solo una vez confirmado que el lote nuevo quedó completo se eliminan los registros viejos
+    // de esos mismos días (si algo falla antes, no se pierde nada). Se excluye el lote nuevo.
     let reemplazados = 0;
-    if (existentes && existentes.length){
-      const ids = existentes.map(b => b.id);
-      const { error: errDelete } = await supabaseClient.from('printer_batches').delete().in('id', ids);
+    if (previos > 0){
+      const { error: errDelete } = await supabaseClient.from('printer_records').delete()
+        .gte('fecha', inicioISO).lt('fecha', finISO).neq('batch_id', batch.id);
       if (errDelete) throw errDelete;
-      reemplazados = existentes.length;
+      reemplazados = previos;
+    }
+
+    // Limpieza de lotes vecinos: si se quedaron sin registros se eliminan; si conservan algunos,
+    // se actualiza su contador. Nunca se borra un lote que todavía tiene datos de otras fechas.
+    for (const b of (existentes || [])){
+      const { count: restantes, error: errRest } = await supabaseClient
+        .from('printer_records').select('id', { count: 'exact', head: true }).eq('batch_id', b.id);
+      if (errRest) throw errRest;
+      if (restantes === 0){
+        const { error: errDelB } = await supabaseClient.from('printer_batches').delete().eq('id', b.id);
+        if (errDelB) throw errDelB;
+      } else {
+        const { error: errUpd } = await supabaseClient.from('printer_batches').update({ total_registros: restantes }).eq('id', b.id);
+        if (errUpd) throw errUpd;
+      }
     }
 
     if (statusEl){
       statusEl.textContent = '"' + fileName + '" guardado (' + registros.length + ' registros, ' + fDesde + ' → ' + fHasta + ')' +
-        (reemplazados ? '. Se reemplazó ' + reemplazados + ' lote(s) anterior(es) que cubrían fechas solapadas: ' + existentes.map(e=>e.nombre_archivo).join(', ') + '.' : '.');
+        (reemplazados ? '. Se reemplazaron ' + reemplazados.toLocaleString('en-US') + ' registros previos de esas mismas fechas; el resto del historial no se modificó.' : '.');
       statusEl.className = 'batch-status ok';
     }
     populateHistUsuariosList();
@@ -3640,42 +3679,3 @@ async function cargarCargasYEmpresas(){
 }
 $('btn-cargas').addEventListener('click', cargarCargasYEmpresas);
 
-// =====================================================================
-// Re-ejecución automática: si un análisis ya se corrió y luego cambian sus fechas, se vuelve
-// a ejecutar solo (igual que el Informe de consumo). También sigue funcionando el botón.
-// =====================================================================
-(function(){
-  const cfgs = [
-    { ids:['hist-desde','hist-hasta'],   btn:'btn-hist-buscar',          run:() => buscarHistorial() },
-    { ids:['anom-desde','anom-hasta'],   btn:'btn-analizar-anomalias',   run:() => analizarAnomalias() },
-    { ids:['cusum-desde','cusum-hasta'], btn:'btn-analizar-cusum',       run:() => analizarCusum() },
-    { ids:['pers-desde','pers-hasta'],   btn:'btn-analizar-personales',  run:() => analizarImpresionesPersonales() },
-    { ids:['fh-desde','fh-hasta'],       btn:'btn-analizar-fh',          run:() => analizarFueraHorario() },
-    { ids:['rf-desde','rf-hasta'],       btn:'btn-analizar-rafagas',     run:() => analizarRafagas() },
-    { ids:['dc-desde','dc-hasta'],       btn:'btn-analizar-compartidos', run:() => analizarDocumentosCompartidos() },
-    { ids:['dr-desde','dr-hasta'],       btn:'btn-analizar-repetidos',   run:() => analizarDocumentosRepetidos() },
-    { ids:['af-corte'],                  btn:'btn-analizar-afinidad',    run:() => analizarAfinidad() },
-    { ids:['sr-desde','sr-hasta'],       btn:'btn-analizar-score',       run:() => analizarScoreRiesgo() },
-    { ids:['emp-desde','emp-hasta'],     btn:'btn-cargas',               run:() => cargarCargasYEmpresas() }
-  ];
-  cfgs.forEach(cfg => {
-    let yaEjecutado = false, timer = null;
-    const btn = $(cfg.btn);
-    if (btn) btn.addEventListener('click', () => { yaEjecutado = true; });
-    cfg.ids.forEach(id => {
-      const el = $(id);
-      if (!el) return;
-      el.addEventListener('change', () => {
-        if (!yaEjecutado || !supabaseClient) return;
-        const d = cfg.ids.length === 2 ? $(cfg.ids[0]).value : '', h = cfg.ids.length === 2 ? $(cfg.ids[1]).value : '';
-        if (d && h && d > h) return; // rango invertido: no consultar
-        clearTimeout(timer);
-        timer = setTimeout(cfg.run, 350);
-      });
-    });
-  });
-})();
-
-</script>
-</body>
-</html>
