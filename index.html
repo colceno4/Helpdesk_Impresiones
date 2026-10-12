@@ -3446,13 +3446,15 @@ function renderInforme(){
     } else {
       html += '<div style="overflow-x:auto;"><table class="changes-table gasto-table"><thead><tr><th style="position:sticky;left:0;background:#FAFAF7;">Centro de Costo</th>' +
         periods.map(p => '<th class="num" style="white-space:nowrap;">' + escH(periodShortLabel(p)) + '</th>').join('') +
-        '<th class="num" style="white-space:nowrap;">Total del rango</th></tr></thead><tbody>' +
+        '<th class="num" style="white-space:nowrap;">Total del rango</th><th class="num" style="white-space:nowrap;">Promedio mensual</th></tr></thead><tbody>' +
         gastoFilas.map(f => '<tr><td class="name" style="position:sticky;left:0;background:var(--surface);">' + escH(f.c) + '</td>' +
           f.vals.map(v => '<td class="num" style="white-space:nowrap;">' + (v > 0 ? fmtG(v) : '\u2014') + '</td>').join('') +
-          '<td class="num" style="white-space:nowrap;font-weight:600;">' + fmtG(f.tot) + '</td></tr>').join('') +
+          '<td class="num" style="white-space:nowrap;font-weight:600;">' + fmtG(f.tot) + '</td>' +
+          '<td class="num" style="white-space:nowrap;">' + fmtG(f.tot / periods.length) + '</td></tr>').join('') +
         '<tr style="font-weight:700;"><td class="name" style="position:sticky;left:0;background:#FAFAF7;">TOTAL</td>' +
         gastoMes.map(v => '<td class="num" style="white-space:nowrap;background:#FAFAF7;">' + fmtG(v) + '</td>').join('') +
-        '<td class="num" style="white-space:nowrap;background:#FAFAF7;">' + fmtG(gastoTotal) + '</td></tr>' +
+        '<td class="num" style="white-space:nowrap;background:#FAFAF7;">' + fmtG(gastoTotal) + '</td>' +
+        '<td class="num" style="white-space:nowrap;background:#FAFAF7;">' + fmtG(gastoTotal / periods.length) + '</td></tr>' +
         '</tbody></table></div>';
     }
     html += '</div>';
