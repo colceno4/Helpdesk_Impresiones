@@ -60,6 +60,11 @@ body{
 .topbar .title-block .contract{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.24);color:#fff;}
 .topbar .regmark-header circle{mix-blend-mode:normal !important;opacity:1;}
 .topbar .regmark-header line{stroke:rgba(255,255,255,.5);}
+/* Pestañas y etiqueta de ámbito sobre el fondo azul oscuro: texto claro para que se lea */
+.topbar .tabs{border-bottom-color:rgba(255,255,255,.22);}
+.topbar .tabs button{color:rgba(255,255,255,.82);}
+.topbar .tabs button:hover:not(.active){color:#fff;}
+.topbar .tabs button.active{color:#fff;border-bottom-color:var(--brand);}
 
 /* ---------- Header ---------- */
 .header{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin-bottom:28px;flex-wrap:wrap;}
@@ -274,6 +279,11 @@ tfoot td:first-child{text-align:left;font-family:'Space Grotesk',sans-serif;}
 .dash-section{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px;margin-bottom:16px;}
 .dash-section h2{font-family:'Space Grotesk',sans-serif;font-size:15px;margin:0 0 4px;font-weight:600;}
 .dash-section .dash-sub{font-size:11.5px;color:var(--ink-soft);margin:0 0 14px;}
+/* Contenedor único del Informe de consumo: informe ejecutivo + consumo por CeCo, color, departamento, usuario y dispositivos */
+.dash-group{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px 20px;margin-bottom:16px;}
+.dash-group .exec-report{border:none;border-radius:0;padding:0;margin:0 0 16px;}
+.dash-group .summary-row{margin-bottom:0;}
+.dash-group > .dash-section{background:none;border:none;border-radius:0;box-shadow:none;padding:18px 0 0;margin:18px 0 0;border-top:1px solid var(--line);}
 .dash-controls{display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap;}
 .dash-controls input[type=text], .dash-controls select{
   padding:6px 10px;border:1px solid var(--line);border-radius:7px;font-size:12px;font-family:'Inter',sans-serif;
@@ -435,7 +445,7 @@ tfoot td:first-child{text-align:left;font-family:'Space Grotesk',sans-serif;}
   </div>
 
   <div class="ambito-bar" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:8px 0;">
-    <span style="font-size:12px;color:var(--ink-soft);">Ámbito del análisis (Histórico, Anomalías, Personales, Patrones, Informe):</span>
+    <span style="font-size:12px;color:rgba(255,255,255,.82);">Ámbito del análisis (Histórico, Anomalías, Personales, Patrones, Informe):</span>
     <div class="segmented" id="ambito-global">
       <button data-ambito="todos" class="active">Todo el registro</button>
       <button data-ambito="consumo">Solo Consumo</button>
@@ -3324,6 +3334,7 @@ function renderInforme(){
 
   let html = '';
 
+  html += '<div class="dash-group">';
   html += buildExecReportHTML(latest, previous, cecoList, userList, changes);
 
   html += '<div class="summary-row">';
@@ -3370,6 +3381,7 @@ function renderInforme(){
     }
     html += '</div>';
   }
+  html += '</div>'; // fin del contenedor único (.dash-group)
 
   if (periods.length >= 2){
     // ---- Tendencia ----
