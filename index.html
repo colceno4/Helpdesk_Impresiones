@@ -2112,25 +2112,22 @@ function populateCecosDatalist(){
 
 // ---------- Persistencia de la base de Centros de Costo en Supabase ----------
 async function guardarCecosEnSupabase(users, consumoSet, pecuariaSet){
-  // Reemplaza por completo el contenido de ambas tablas (la base de CeCos es
-  // relativamente pequeña — unos cientos de filas — así que un reemplazo total
-  // es más simple y confiable que calcular altas/bajas/cambios uno por uno).
-  const { error: errDelU } = await supabaseClient.from('ceco_users').delete().not('usuario', 'is', null);
-  if (errDelU) throw errDelU;
+  // Solo inserta o actualiza (upsert) las filas recibidas. NO borra nada: los usuarios y CeCo que
+  // ya estaban en Supabase y no vienen en esta llamada se conservan tal cual. (Antes se vaciaban
+  // ambas tablas y se reinsertaba todo, lo que borraba a cualquiera que no estuviera en el archivo
+  // y, si fallaba a mitad de camino, dejaba la base vacía.)
   const userRows = users.map(u => ({ usuario: u.usuario, nombre: u.nombre || null, ceco: u.ceco || null }));
   const CHUNK = 500;
   for (let i = 0; i < userRows.length; i += CHUNK){
-    const { error } = await supabaseClient.from('ceco_users').insert(userRows.slice(i, i+CHUNK));
+    const { error } = await supabaseClient.from('ceco_users').upsert(userRows.slice(i, i+CHUNK), { onConflict: 'usuario' });
     if (error) throw error;
   }
 
-  const { error: errDelS } = await supabaseClient.from('ceco_scopes').delete().not('ceco', 'is', null);
-  if (errDelS) throw errDelS;
   const scopeRows = [];
   consumoSet.forEach(c => scopeRows.push({ ceco: c, ambito: 'consumo' }));
   pecuariaSet.forEach(c => scopeRows.push({ ceco: c, ambito: 'pecuaria' }));
-  if (scopeRows.length){
-    const { error } = await supabaseClient.from('ceco_scopes').insert(scopeRows);
+  for (let i = 0; i < scopeRows.length; i += CHUNK){
+    const { error } = await supabaseClient.from('ceco_scopes').upsert(scopeRows.slice(i, i+CHUNK), { onConflict: 'ceco' });
     if (error) throw error;
   }
 }
@@ -2244,18 +2241,41 @@ $('file-cecos-update').addEventListener('change', async (e) => {
     const wb = XLSX.read(buf, {type:'array', cellDates:false});
     const parsed = parseCecosWorkbook(wb);
     let updatedParts = [];
+    let usuariosParaGuardar = [];
+    const consumoArchivo = new Set(), pecuariaArchivo = new Set();
+
+    // Fusión con la base existente: el archivo agrega usuarios nuevos y actualiza los que ya existen,
+    // pero NO elimina a nadie que no esté en el archivo (para eliminar usuarios, usa "Editar usuarios").
+    // Un nombre o CeCo vacío en el archivo no borra el valor que ya tenía el usuario.
     if (parsed.users && parsed.users.length){
-      currentUsers = parsed.users;
-      updatedParts.push(parsed.users.length + ' usuarios');
+      const porUsuario = new Map(currentUsers.map(u => [u.usuario, u]));
+      let nuevos = 0, actualizados = 0;
+      parsed.users.forEach(u => {
+        const ex = porUsuario.get(u.usuario);
+        const fusion = { usuario: u.usuario, nombre: u.nombre || (ex ? ex.nombre : ''), ceco: u.ceco || (ex ? ex.ceco : '') };
+        if (!ex) nuevos++;
+        else if (fusion.nombre !== ex.nombre || fusion.ceco !== ex.ceco) actualizados++;
+        porUsuario.set(u.usuario, fusion);
+        usuariosParaGuardar.push(fusion);
+      });
+      currentUsers = Array.from(porUsuario.values());
+      updatedParts.push(parsed.users.length + ' usuarios en el archivo (' + nuevos + ' nuevos, ' + actualizados + ' actualizados; no se eliminó a nadie)');
     }
-    if (parsed.consumo && parsed.consumo.length){ CONSUMO_SET = new Set(parsed.consumo); updatedParts.push('Consumo'); }
-    if (parsed.pecuaria && parsed.pecuaria.length){ PECUARIA_SET = new Set(parsed.pecuaria); updatedParts.push('Pecuaria'); }
+    if (parsed.consumo && parsed.consumo.length){
+      parsed.consumo.forEach(c => { CONSUMO_SET.add(c); PECUARIA_SET.delete(c); consumoArchivo.add(c); });
+      updatedParts.push('Consumo');
+    }
+    if (parsed.pecuaria && parsed.pecuaria.length){
+      parsed.pecuaria.forEach(c => { PECUARIA_SET.add(c); CONSUMO_SET.delete(c); pecuariaArchivo.add(c); });
+      updatedParts.push('Pecuaria');
+    }
     rebuildUserMaps();
     updateBaseCountLabel();
     if (updatedParts.length){
       if (supabaseClient){
         try {
-          await guardarCecosEnSupabase(currentUsers, CONSUMO_SET, PECUARIA_SET);
+          // Solo se envían las filas que trae el archivo, para no pisar cambios hechos por otras personas.
+          await guardarCecosEnSupabase(usuariosParaGuardar, consumoArchivo, pecuariaArchivo);
           updatedParts.push('sincronizado con Supabase');
         } catch(err){
           updatedParts.push('⚠ no se pudo sincronizar con Supabase: ' + (err.message||err));
@@ -3375,6 +3395,7 @@ function renderInforme(){
     const allUsersMap = {};
     periods.forEach(p => Object.values(p.byUser).forEach(u => { allUsersMap[u.usuario] = u.nombre || u.usuario; }));
     html += '<div class="dash-section"><h2>Tendencia por elemento</h2><p class="dash-sub">Elige un Centro de Costo, un usuario o una impresora: el gr\u00e1fico se muestra a todo el ancho de este recuadro (puedes elegir varios a la vez).</p>';
+    html += '<div style="margin:0 0 14px;"><button type="button" class="btn-secondary" id="btn-descargar-tendencias-ceco">Descargar tendencias de todos los Centros de Costo (.xlsx)</button></div>';
     html += '<div class="trend-grid">';
 
     html += '<div class="trend-col"><h2 style="font-size:14px;">Tendencia por Centro de Costo</h2>';
@@ -3503,6 +3524,56 @@ function renderInforme(){
     box.querySelectorAll('.trend-chart-slot').forEach(slot => {
       const it = items[+slot.getAttribute('data-i')];
       slot.innerHTML = svgTrendFull(trendLabels, it.values, slot);
+    });
+  }
+
+  // Descarga de las tendencias mensuales de TODOS los Centros de Costo (respeta rango y ámbito activos)
+  const btnTendCeco = $('btn-descargar-tendencias-ceco');
+  if (btnTendCeco){
+    btnTendCeco.addEventListener('click', () => {
+      if (typeof XLSX === 'undefined' || !XLSX.utils || !XLSX.utils.aoa_to_sheet){
+        alert('No cargó la librería de Excel (revisa red/bloqueador) y no se puede generar el archivo.');
+        return;
+      }
+      const cecos = new Set();
+      periods.forEach(p => Object.keys(p.byCeco).forEach(c => cecos.add(c)));
+      if (!cecos.size){ alert('No hay datos de Centros de Costo en el rango actual.'); return; }
+      const val = (p, c, campo) => (p.byCeco[c] ? (p.byCeco[c][campo] || 0) : 0);
+      const stats = (vals) => {
+        const tot = vals.reduce((a,b) => a+b, 0);
+        const last = vals[vals.length-1], prev = vals.length > 1 ? vals[vals.length-2] : null;
+        let varc = 'N/D';
+        if (prev !== null && prev > 0) varc = Math.round((last-prev)/prev*1000)/10;
+        else if (prev === 0 && last > 0) varc = 'Nuevo';
+        return { tot, avg: Math.round(tot/vals.length), mx: Math.max(...vals), mn: Math.min(...vals), varc };
+      };
+      const filas = Array.from(cecos).map(c => {
+        const vals = periods.map(p => val(p, c, 'total'));
+        return { c, vals, s: stats(vals), bn: periods.map(p => val(p, c, 'bn')), color: periods.map(p => val(p, c, 'color')) };
+      }).sort((x, y) => y.s.tot - x.s.tot || x.c.localeCompare(y.c, 'es'));
+
+      const hojaTotal = [['Centro de Costo'].concat(trendLabels, ['Total del rango', 'Promedio mensual', 'Máximo', 'Mínimo', 'Último mes vs. anterior (%)'])];
+      filas.forEach(f => hojaTotal.push([f.c].concat(f.vals, [f.s.tot, f.s.avg, f.s.mx, f.s.mn, f.s.varc])));
+      const totMes = periods.map((p, i) => filas.reduce((s, f) => s + f.vals[i], 0));
+      hojaTotal.push(['TOTAL'].concat(totMes, [totMes.reduce((a,b) => a+b, 0), '', '', '', '']));
+
+      const hojaDe = (campo) => {
+        const h = [['Centro de Costo'].concat(trendLabels, ['Total del rango'])];
+        filas.forEach(f => { const v = f[campo]; h.push([f.c].concat(v, [v.reduce((a,b) => a+b, 0)])); });
+        return h;
+      };
+      const wb = XLSX.utils.book_new();
+      const ws1 = XLSX.utils.aoa_to_sheet(hojaTotal);
+      ws1['!cols'] = [{ wch: 34 }].concat(trendLabels.map(() => ({ wch: 9 })), [{ wch: 15 }, { wch: 17 }, { wch: 10 }, { wch: 10 }, { wch: 26 }]);
+      XLSX.utils.book_append_sheet(wb, ws1, 'Tendencia total');
+      const ws2 = XLSX.utils.aoa_to_sheet(hojaDe('bn'));
+      ws2['!cols'] = [{ wch: 34 }];
+      XLSX.utils.book_append_sheet(wb, ws2, 'B-N');
+      const ws3 = XLSX.utils.aoa_to_sheet(hojaDe('color'));
+      ws3['!cols'] = [{ wch: 34 }];
+      XLSX.utils.book_append_sheet(wb, ws3, 'Color');
+      const hoy = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(wb, 'Tendencias_CeCo_' + hoy + '.xlsx');
     });
   }
 
