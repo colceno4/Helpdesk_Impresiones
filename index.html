@@ -279,11 +279,21 @@ tfoot td:first-child{text-align:left;font-family:'Space Grotesk',sans-serif;}
 .dash-section{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px;margin-bottom:16px;}
 .dash-section h2{font-family:'Space Grotesk',sans-serif;font-size:15px;margin:0 0 4px;font-weight:600;}
 .dash-section .dash-sub{font-size:11.5px;color:var(--ink-soft);margin:0 0 14px;}
-/* Contenedor único del Informe de consumo: informe ejecutivo + consumo por CeCo, color, departamento, usuario y dispositivos */
+/* Caja única del Informe de consumo: un solo recuadro con flechas para cambiar entre reportes */
 .dash-group{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px 20px;margin-bottom:16px;}
 .dash-group .exec-report{border:none;border-radius:0;padding:0;margin:0 0 16px;}
 .dash-group .summary-row{margin-bottom:0;}
-.dash-group > .dash-section{background:none;border:none;border-radius:0;box-shadow:none;padding:18px 0 0;margin:18px 0 0;border-top:1px solid var(--line);}
+.dash-group .dash-section{background:none;border:none;border-radius:0;box-shadow:none;padding:0;margin:0;}
+.rep-nav{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:14px;margin-bottom:16px;border-bottom:1px solid var(--line);}
+.rep-nav-center{flex:1;text-align:center;min-width:0;}
+.rep-nav-title{font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.rep-dots{display:flex;justify-content:center;gap:6px;margin-top:6px;}
+.rep-dot{width:8px;height:8px;padding:0;border-radius:50%;border:none;background:var(--line);cursor:pointer;}
+.rep-dot.active{background:var(--ink);transform:scale(1.25);}
+.rep-arrow{flex:none;width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#fff;color:var(--ink);font-size:22px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0 0 3px;}
+.rep-arrow:hover{background:var(--paper);border-color:var(--ink);}
+.rep-slide{display:none;}
+.rep-slide.active{display:block;}
 .dash-controls{display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap;}
 .dash-controls input[type=text], .dash-controls select{
   padding:6px 10px;border:1px solid var(--line);border-radius:7px;font-size:12px;font-family:'Inter',sans-serif;
@@ -2826,7 +2836,7 @@ document.querySelectorAll('#main-tabs button').forEach(btn => {
   });
 });
 
-const informeState = { periods: [], actual: null, anterior: null, rangoAnterior: null }; // {id,label,source,dateRange:{min,max}|null,byUser,byCeco,totalAll}
+const informeState = { periods: [], actual: null, anterior: null, rangoAnterior: null, slide: 0 }; // {id,label,source,dateRange:{min,max}|null,byUser,byCeco,totalAll}
 let periodSeq = 0;
 
 function aggregateReportRows(rows){
@@ -3345,54 +3355,71 @@ function renderInforme(){
 
   let html = '';
 
-  html += '<div class="dash-group">';
-  html += buildExecReportHTML(latest, previous, cecoList, userList, changes);
+  // ---- Una sola caja con flechas para cambiar entre reportes ----
+  const slides = [];
 
-  html += '<div class="summary-row">';
-  html += '<div class="card"><div class="label">Periodo actual</div><div class="value" style="font-size:16px;">' + latest.label + '</div></div>';
-  html += '<div class="card"><div class="label">Impresiones</div><div class="value">' + fmtInt(latest.totalAll) + '</div></div>';
-  html += '<div class="card"><div class="label">Usuarios activos</div><div class="value">' + fmtInt(userList.length) + '</div></div>';
-  html += '<div class="card"><div class="label">Centros de costo</div><div class="value">' + fmtInt(cecoList.length) + '</div></div>';
-  html += '</div>';
+  // 1) Informe ejecutivo
+  let sExec = buildExecReportHTML(latest, previous, cecoList, userList, changes);
+  sExec += '<div class="summary-row">';
+  sExec += '<div class="card"><div class="label">Periodo actual</div><div class="value" style="font-size:16px;">' + latest.label + '</div></div>';
+  sExec += '<div class="card"><div class="label">Impresiones</div><div class="value">' + fmtInt(latest.totalAll) + '</div></div>';
+  sExec += '<div class="card"><div class="label">Usuarios activos</div><div class="value">' + fmtInt(userList.length) + '</div></div>';
+  sExec += '<div class="card"><div class="label">Centros de costo</div><div class="value">' + fmtInt(cecoList.length) + '</div></div>';
+  sExec += '</div>';
+  slides.push({ title: 'Informe ejecutivo de impresi\u00f3n', html: sExec });
 
-  // ---- Por Centro de Costo ----
-  html += '<div class="dash-section"><h2>Consumo por Centro de Costo</h2><p class="dash-sub">Periodo: ' + latest.label + (previous ? ' \u00b7 variaci\u00f3n vs ' + previous.label : '') + '</p>';
-  html += '<div class="legend-mini"><span><span class="sw" style="background:var(--ink-soft)"></span>B/N</span><span><span class="sw" style="background:linear-gradient(90deg,#00AEEF,#EC008C,#FFDE17)"></span>Color</span></div>';
-  html += barRows(cecoList.slice(0,20).map(c => ({label:c.ceco, key:c.ceco, total:c.total, bn:c.bn, color:c.color})), { prevMap: previous ? previous.byCeco : null });
-  html += '</div>';
+  // 2) Por Centro de Costo
+  let sCeco = '<div class="dash-section"><h2>Consumo por Centro de Costo</h2><p class="dash-sub">Periodo: ' + latest.label + (previous ? ' \u00b7 variaci\u00f3n vs ' + previous.label : '') + '</p>';
+  sCeco += '<div class="legend-mini"><span><span class="sw" style="background:var(--ink-soft)"></span>B/N</span><span><span class="sw" style="background:linear-gradient(90deg,#00AEEF,#EC008C,#FFDE17)"></span>Color</span></div>';
+  sCeco += barRows(cecoList.slice(0,20).map(c => ({label:c.ceco, key:c.ceco, total:c.total, bn:c.bn, color:c.color})), { prevMap: previous ? previous.byCeco : null });
+  sCeco += '</div>';
+  slides.push({ title: 'Consumo por Centro de Costo', html: sCeco });
 
-  // ---- Huella de color por área ----
-  html += '<div class="dash-section"><h2>Huella de color por \u00e1rea</h2><p class="dash-sub">% de impresiones a color por Centro de Costo (\u00e1reas con m\u00e1s color = mayor costo por hoja) \u00b7 tarifas: B/N $' + rateBN + ' \u00b7 Color $' + rateColor + '</p>';
-  html += colorFootprintHTML(cecoList, rateBN, rateColor);
-  html += '</div>';
+  // 3) Huella de color por área
+  let sColor = '<div class="dash-section"><h2>Huella de color por \u00e1rea</h2><p class="dash-sub">% de impresiones a color por Centro de Costo (\u00e1reas con m\u00e1s color = mayor costo por hoja) \u00b7 tarifas: B/N $' + rateBN + ' \u00b7 Color $' + rateColor + '</p>';
+  sColor += colorFootprintHTML(cecoList, rateBN, rateColor);
+  sColor += '</div>';
+  slides.push({ title: 'Huella de color por \u00e1rea', html: sColor });
 
-  // ---- Por Departamento ----
+  // 4) Por Departamento
   if (deptoList.length){
-    html += '<div class="dash-section"><h2>Consumo por Departamento</h2><p class="dash-sub">Corte alternativo al Centro de Costo, seg\u00fan la columna "Departamento" del Reporte</p>';
-    html += barRows(deptoList.slice(0,20).map(d => ({label:d.depto, key:d.depto, total:d.total, bn:d.bn, color:d.color})), { prevMap: previous ? previous.byDepto : null });
-    html += '</div>';
+    let sDep = '<div class="dash-section"><h2>Consumo por Departamento</h2><p class="dash-sub">Corte alternativo al Centro de Costo, seg\u00fan la columna "Departamento" del Reporte</p>';
+    sDep += barRows(deptoList.slice(0,20).map(d => ({label:d.depto, key:d.depto, total:d.total, bn:d.bn, color:d.color})), { prevMap: previous ? previous.byDepto : null });
+    sDep += '</div>';
+    slides.push({ title: 'Consumo por Departamento', html: sDep });
   }
 
-  // ---- Por Usuario ----
-  html += '<div class="dash-section"><h2>Consumo por Usuario</h2><p class="dash-sub">Top usuarios del periodo ' + latest.label + '</p>';
-  html += '<div class="dash-controls"><input type="text" id="filtro-usuario" placeholder="Buscar usuario o nombre\u2026"></div>';
-  html += '<div id="usuario-barrows">' + barRows(userList.slice(0,20).map(u => ({label:(u.nombre||u.usuario), key:u.usuario, total:u.total, bn:u.bn, color:u.color})), { prevMap: previous ? previous.byUser : null }) + '</div>';
-  html += '</div>';
+  // 5) Por Usuario
+  let sUser = '<div class="dash-section"><h2>Consumo por Usuario</h2><p class="dash-sub">Top usuarios del periodo ' + latest.label + '</p>';
+  sUser += '<div class="dash-controls"><input type="text" id="filtro-usuario" placeholder="Buscar usuario o nombre\u2026"></div>';
+  sUser += '<div id="usuario-barrows">' + barRows(userList.slice(0,20).map(u => ({label:(u.nombre||u.usuario), key:u.usuario, total:u.total, bn:u.bn, color:u.color})), { prevMap: previous ? previous.byUser : null }) + '</div>';
+  sUser += '</div>';
+  slides.push({ title: 'Consumo por Usuario', html: sUser });
 
-  // ---- Ranking de dispositivos ----
+  // 6) Ranking de dispositivos
   if (deviceList.length){
     const totalDeviceVol = deviceList.reduce((s,d) => s+d.total, 0);
-    html += '<div class="dash-section"><h2>Ranking de dispositivos / impresoras</h2><p class="dash-sub">Volumen por equipo (Dispositivo \u00b7 Serie)</p>';
-    html += barRows(deviceList.slice(0,15).map(d => ({label:d.label, key:d.device, total:d.total, bn:d.bn, color:d.color})));
+    let sDev = '<div class="dash-section"><h2>Ranking de dispositivos / impresoras</h2><p class="dash-sub">Volumen por equipo (Dispositivo \u00b7 Serie)</p>';
+    sDev += barRows(deviceList.slice(0,15).map(d => ({label:d.label, key:d.device, total:d.total, bn:d.bn, color:d.color})));
     const concentrados = deviceList.filter(d => totalDeviceVol > 0 && (d.total/totalDeviceVol) > 0.15);
     if (concentrados.length){
-      html += '<div class="alert info" style="margin-top:12px;"><strong>Concentraci\u00f3n de volumen</strong>' +
+      sDev += '<div class="alert info" style="margin-top:12px;"><strong>Concentraci\u00f3n de volumen</strong>' +
         concentrados.map(d => d.label + ' concentra el ' + ((d.total/totalDeviceVol)*100).toFixed(0) + '% del volumen total').join(' \u00b7 ') +
         ' <span class="flag-badge">Revisar</span></div>';
     }
-    html += '</div>';
+    sDev += '</div>';
+    slides.push({ title: 'Ranking de dispositivos / impresoras', html: sDev });
   }
-  html += '</div>'; // fin del contenedor único (.dash-group)
+
+  if (typeof informeState.slide !== 'number' || informeState.slide >= slides.length) informeState.slide = 0;
+  html += '<div class="dash-group" id="rep-carousel">';
+  html += '<div class="rep-nav">' +
+    '<button type="button" class="rep-arrow" id="rep-prev" aria-label="Reporte anterior">\u2039</button>' +
+    '<div class="rep-nav-center"><div class="rep-nav-title" id="rep-title"></div>' +
+    '<div class="rep-dots">' + slides.map((sl,i) => '<button type="button" class="rep-dot" data-i="' + i + '" title="' + escH(sl.title) + '" aria-label="' + escH(sl.title) + '"></button>').join('') + '</div></div>' +
+    '<button type="button" class="rep-arrow" id="rep-next" aria-label="Reporte siguiente">\u203a</button></div>';
+  slides.forEach((sl,i) => { html += '<div class="rep-slide" data-i="' + i + '">' + sl.html + '</div>'; });
+  html += '</div>'; // fin de la caja \u00fanica (carrusel)
 
   if (periods.length >= 2){
     // ---- Tendencia ----
@@ -3493,8 +3520,21 @@ function renderInforme(){
 
   $('informe-results-area').innerHTML = html;
 
+  function showSlide(i){
+    const n = slides.length;
+    i = ((i % n) + n) % n;
+    informeState.slide = i;
+    document.querySelectorAll('#rep-carousel .rep-slide').forEach(el => el.classList.toggle('active', Number(el.dataset.i) === i));
+    document.querySelectorAll('#rep-carousel .rep-dot').forEach(el => el.classList.toggle('active', Number(el.dataset.i) === i));
+    $('rep-title').textContent = slides[i].title + '  \u00b7  ' + (i+1) + ' / ' + n;
+  }
+  $('rep-prev').addEventListener('click', () => showSlide(informeState.slide - 1));
+  $('rep-next').addEventListener('click', () => showSlide(informeState.slide + 1));
+  document.querySelectorAll('#rep-carousel .rep-dot').forEach(el => el.addEventListener('click', () => showSlide(Number(el.dataset.i))));
+  showSlide(informeState.slide);
+
   const btnPrint = $('btn-print-exec');
-  if (btnPrint) btnPrint.addEventListener('click', () => window.print());
+  if (btnPrint) btnPrint.addEventListener('click', () => { showSlide(0); window.print(); });
 
   const filtroInput = $('filtro-usuario');
   if (filtroInput) filtroInput.addEventListener('input', () => {
