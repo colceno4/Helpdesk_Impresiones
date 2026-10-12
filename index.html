@@ -3429,6 +3429,34 @@ function renderInforme(){
     html += svgTrend(labels, totals);
     html += '</div>';
 
+    // ---- Gasto por Centro de Costo y mes (costo estimado con las tarifas internas B/N y Color) ----
+    const gastoCecos = new Set();
+    periods.forEach(p => Object.keys(p.byCeco).forEach(c => gastoCecos.add(c)));
+    const gastoCelda = (p, c) => p.byCeco[c] ? (p.byCeco[c].bn || 0) * rateBN + (p.byCeco[c].color || 0) * rateColor : 0;
+    const gastoFilas = Array.from(gastoCecos).map(c => {
+      const vals = periods.map(p => gastoCelda(p, c));
+      return { c, vals, tot: vals.reduce((a, b) => a + b, 0) };
+    }).sort((a, b) => b.tot - a.tot || a.c.localeCompare(b.c, 'es'));
+    const gastoMes = periods.map((p, i) => gastoFilas.reduce((sum, f) => sum + f.vals[i], 0));
+    const gastoTotal = gastoMes.reduce((a, b) => a + b, 0);
+    const fmtG = n => '$ ' + n.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+    html += '<div class="dash-section"><h2>Gasto por Centro de Costo</h2><p class="dash-sub">Costo estimado por mes dentro del rango (USD) \u00b7 B/N × $' + rateBN + ' + Color × $' + rateColor + ' por hoja (tarifas internas; el monto real a pagar sale de la factura)</p>';
+    if (!gastoFilas.length){
+      html += '<p style="font-size:12.5px;color:var(--ink-soft);">No hay datos de Centros de Costo en el rango actual.</p>';
+    } else {
+      html += '<div style="overflow-x:auto;"><table class="changes-table gasto-table"><thead><tr><th style="position:sticky;left:0;background:#FAFAF7;">Centro de Costo</th>' +
+        periods.map(p => '<th class="num" style="white-space:nowrap;">' + escH(periodShortLabel(p)) + '</th>').join('') +
+        '<th class="num" style="white-space:nowrap;">Total del rango</th></tr></thead><tbody>' +
+        gastoFilas.map(f => '<tr><td class="name" style="position:sticky;left:0;background:var(--surface);">' + escH(f.c) + '</td>' +
+          f.vals.map(v => '<td class="num" style="white-space:nowrap;">' + (v > 0 ? fmtG(v) : '\u2014') + '</td>').join('') +
+          '<td class="num" style="white-space:nowrap;font-weight:600;">' + fmtG(f.tot) + '</td></tr>').join('') +
+        '<tr style="font-weight:700;"><td class="name" style="position:sticky;left:0;background:#FAFAF7;">TOTAL</td>' +
+        gastoMes.map(v => '<td class="num" style="white-space:nowrap;background:#FAFAF7;">' + fmtG(v) + '</td>').join('') +
+        '<td class="num" style="white-space:nowrap;background:#FAFAF7;">' + fmtG(gastoTotal) + '</td></tr>' +
+        '</tbody></table></div>';
+    }
+    html += '</div>';
+
     // ---- Cambios mes a mes por usuario (dentro del propio rango, mes calendario contra mes calendario) ----
     const mesAMesChanges = computeMonthToMonthChanges(periods, thresholdPct);
     html += '<div class="dash-section"><h2>Cambios mes a mes por usuario</h2><p class="dash-sub">Compara cada mes del rango contra el mes calendario inmediato anterior (no el bloque completo) \u00b7 umbral ' + thresholdPct + '%</p>';
@@ -3445,7 +3473,7 @@ function renderInforme(){
     const allUsersMap = {};
     periods.forEach(p => Object.values(p.byUser).forEach(u => { allUsersMap[u.usuario] = u.nombre || u.usuario; }));
     html += '<div class="dash-section"><h2>Tendencia por elemento</h2><p class="dash-sub">Elige un Centro de Costo, un usuario o una impresora: el gr\u00e1fico se muestra a todo el ancho de este recuadro (puedes elegir varios a la vez).</p>';
-    html += '<div style="margin:0 0 14px;"><button type="button" class="btn-secondary" id="btn-descargar-tendencias-ceco">Descargar tendencias de todos los Centros de Costo (.xlsx)</button> <button type="button" class="btn-secondary" id="btn-descargar-graficas-ceco">Descargar gr\u00e1ficas de tendencia de todos los Centros de Costo (PDF)</button></div>';
+    html += '<div style="margin:0 0 14px;"><button type="button" class="btn-secondary" id="btn-descargar-graficas-ceco">Descargar gr\u00e1ficas de tendencia de todos los Centros de Costo (PDF)</button></div>';
     html += '<div class="trend-grid">';
 
     html += '<div class="trend-col"><h2 style="font-size:14px;">Tendencia por Centro de Costo</h2>';
@@ -3587,56 +3615,6 @@ function renderInforme(){
     box.querySelectorAll('.trend-chart-slot').forEach(slot => {
       const it = items[+slot.getAttribute('data-i')];
       slot.innerHTML = svgTrendFull(trendLabels, it.values, slot);
-    });
-  }
-
-  // Descarga de las tendencias mensuales de TODOS los Centros de Costo (respeta rango y ámbito activos)
-  const btnTendCeco = $('btn-descargar-tendencias-ceco');
-  if (btnTendCeco){
-    btnTendCeco.addEventListener('click', () => {
-      if (typeof XLSX === 'undefined' || !XLSX.utils || !XLSX.utils.aoa_to_sheet){
-        alert('No cargó la librería de Excel (revisa red/bloqueador) y no se puede generar el archivo.');
-        return;
-      }
-      const cecos = new Set();
-      periods.forEach(p => Object.keys(p.byCeco).forEach(c => cecos.add(c)));
-      if (!cecos.size){ alert('No hay datos de Centros de Costo en el rango actual.'); return; }
-      const val = (p, c, campo) => (p.byCeco[c] ? (p.byCeco[c][campo] || 0) : 0);
-      const stats = (vals) => {
-        const tot = vals.reduce((a,b) => a+b, 0);
-        const last = vals[vals.length-1], prev = vals.length > 1 ? vals[vals.length-2] : null;
-        let varc = 'N/D';
-        if (prev !== null && prev > 0) varc = Math.round((last-prev)/prev*1000)/10;
-        else if (prev === 0 && last > 0) varc = 'Nuevo';
-        return { tot, avg: Math.round(tot/vals.length), mx: Math.max(...vals), mn: Math.min(...vals), varc };
-      };
-      const filas = Array.from(cecos).map(c => {
-        const vals = periods.map(p => val(p, c, 'total'));
-        return { c, vals, s: stats(vals), bn: periods.map(p => val(p, c, 'bn')), color: periods.map(p => val(p, c, 'color')) };
-      }).sort((x, y) => y.s.tot - x.s.tot || x.c.localeCompare(y.c, 'es'));
-
-      const hojaTotal = [['Centro de Costo'].concat(trendLabels, ['Total del rango', 'Promedio mensual', 'Máximo', 'Mínimo', 'Último mes vs. anterior (%)'])];
-      filas.forEach(f => hojaTotal.push([f.c].concat(f.vals, [f.s.tot, f.s.avg, f.s.mx, f.s.mn, f.s.varc])));
-      const totMes = periods.map((p, i) => filas.reduce((s, f) => s + f.vals[i], 0));
-      hojaTotal.push(['TOTAL'].concat(totMes, [totMes.reduce((a,b) => a+b, 0), '', '', '', '']));
-
-      const hojaDe = (campo) => {
-        const h = [['Centro de Costo'].concat(trendLabels, ['Total del rango'])];
-        filas.forEach(f => { const v = f[campo]; h.push([f.c].concat(v, [v.reduce((a,b) => a+b, 0)])); });
-        return h;
-      };
-      const wb = XLSX.utils.book_new();
-      const ws1 = XLSX.utils.aoa_to_sheet(hojaTotal);
-      ws1['!cols'] = [{ wch: 34 }].concat(trendLabels.map(() => ({ wch: 9 })), [{ wch: 15 }, { wch: 17 }, { wch: 10 }, { wch: 10 }, { wch: 26 }]);
-      XLSX.utils.book_append_sheet(wb, ws1, 'Tendencia total');
-      const ws2 = XLSX.utils.aoa_to_sheet(hojaDe('bn'));
-      ws2['!cols'] = [{ wch: 34 }];
-      XLSX.utils.book_append_sheet(wb, ws2, 'B-N');
-      const ws3 = XLSX.utils.aoa_to_sheet(hojaDe('color'));
-      ws3['!cols'] = [{ wch: 34 }];
-      XLSX.utils.book_append_sheet(wb, ws3, 'Color');
-      const hoy = new Date().toISOString().slice(0, 10);
-      XLSX.writeFile(wb, 'Tendencias_CeCo_' + hoy + '.xlsx');
     });
   }
 
