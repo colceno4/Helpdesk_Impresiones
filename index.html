@@ -349,11 +349,22 @@ tfoot td:first-child{text-align:left;font-family:'Space Grotesk',sans-serif;}
 .exec-cols h3{font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:var(--ink-soft);margin:0 0 6px;}
 .flag-badge{display:inline-block;font-size:10px;font-weight:600;padding:1px 7px;border-radius:20px;background:var(--amber-soft);color:var(--amber);margin-left:6px;}
 
+/* Impresión de las gráficas de tendencia de todos los CeCo (se arma al pulsar el botón y se retira al terminar) */
+.trend-print-area{display:none;}
+.tp-head{margin:0 0 14px;}
+.tp-head h1{font-family:'Space Grotesk',sans-serif;font-size:20px;margin:0 0 2px;}
+.tp-head p{font-size:12px;color:var(--ink-soft);margin:0;}
+.tp-card{break-inside:avoid;page-break-inside:avoid;margin:0 0 14px;}
+.tp-card .trend-svg{width:100%;height:auto;display:block;}
 @media print{
   body *{visibility:hidden;}
   .exec-report, .exec-report *{visibility:visible;}
   .exec-report{position:absolute;top:0;left:0;width:100%;border:none;box-shadow:none;}
   .exec-report .btn-print{display:none;}
+  body.printing-trends > *:not(.trend-print-area){display:none !important;}
+  body.printing-trends .trend-print-area{display:block;position:static;}
+  body.printing-trends .trend-print-area, body.printing-trends .trend-print-area *{visibility:visible;}
+  body.printing-trends .trend-print-area{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
 }
 
 /* ---------- DB status + settings ---------- */
@@ -3407,7 +3418,7 @@ function renderInforme(){
     const allUsersMap = {};
     periods.forEach(p => Object.values(p.byUser).forEach(u => { allUsersMap[u.usuario] = u.nombre || u.usuario; }));
     html += '<div class="dash-section"><h2>Tendencia por elemento</h2><p class="dash-sub">Elige un Centro de Costo, un usuario o una impresora: el gr\u00e1fico se muestra a todo el ancho de este recuadro (puedes elegir varios a la vez).</p>';
-    html += '<div style="margin:0 0 14px;"><button type="button" class="btn-secondary" id="btn-descargar-tendencias-ceco">Descargar tendencias de todos los Centros de Costo (.xlsx)</button></div>';
+    html += '<div style="margin:0 0 14px;"><button type="button" class="btn-secondary" id="btn-descargar-tendencias-ceco">Descargar tendencias de todos los Centros de Costo (.xlsx)</button> <button type="button" class="btn-secondary" id="btn-descargar-graficas-ceco">Descargar gr\u00e1ficas de tendencia de todos los Centros de Costo (PDF)</button></div>';
     html += '<div class="trend-grid">';
 
     html += '<div class="trend-col"><h2 style="font-size:14px;">Tendencia por Centro de Costo</h2>';
@@ -3586,6 +3597,42 @@ function renderInforme(){
       XLSX.utils.book_append_sheet(wb, ws3, 'Color');
       const hoy = new Date().toISOString().slice(0, 10);
       XLSX.writeFile(wb, 'Tendencias_CeCo_' + hoy + '.xlsx');
+    });
+  }
+
+  // Gráficas de tendencia de TODOS los Centros de Costo, tal como se ven en el informe, listas para
+  // "Guardar como PDF" desde el cuadro de impresión (respeta el rango y el ámbito activos).
+  const btnGrafCeco = $('btn-descargar-graficas-ceco');
+  if (btnGrafCeco){
+    btnGrafCeco.addEventListener('click', () => {
+      const cecos = new Set();
+      periods.forEach(p => Object.keys(p.byCeco).forEach(c => cecos.add(c)));
+      if (!cecos.size){ alert('No hay datos de Centros de Costo en el rango actual.'); return; }
+      const filas = Array.from(cecos).map(c => ({ c, vals: periods.map(p => p.byCeco[c] ? (p.byCeco[c].total || 0) : 0) }));
+      filas.forEach(f => { f.tot = f.vals.reduce((a,b) => a+b, 0); });
+      filas.sort((x, y) => y.tot - x.tot || x.c.localeCompare(y.c, 'es'));
+
+      const viejo = document.querySelector('.trend-print-area');
+      if (viejo) viejo.remove();
+      const area = document.createElement('div');
+      area.className = 'trend-print-area';
+      const rangoTxt = trendLabels.length ? (trendLabels[0] + (trendLabels.length > 1 ? ' \u2192 ' + trendLabels[trendLabels.length-1] : '')) : '';
+      area.innerHTML = '<div class="tp-head"><h1>Tendencia mensual por Centro de Costo</h1><p>Rango: ' + escH(rangoTxt) +
+        ' \u00b7 ' + filas.length + ' Centros de Costo \u00b7 generado el ' + new Date().toLocaleDateString('es-PE') + '</p></div>' +
+        filas.map(f =>
+          '<div class="trend-card tp-card"><div class="trend-card-title"><span class="trend-tipo">Centro de Costo</span>' + escH(f.c) + '</div>' +
+          trendStatsHTML(f.vals) +
+          svgTrend(trendLabels, f.vals, { w: 720, h: 250, fs: 12, r: 4.5, padL: 40, padR: 40, padT: 30, padB: 34, grid: true }) +
+          '</div>').join('');
+      document.body.appendChild(area);
+      document.body.classList.add('printing-trends');
+      const limpiar = () => {
+        document.body.classList.remove('printing-trends');
+        area.remove();
+        window.removeEventListener('afterprint', limpiar);
+      };
+      window.addEventListener('afterprint', limpiar);
+      window.print();
     });
   }
 
